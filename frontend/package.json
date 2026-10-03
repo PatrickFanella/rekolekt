@@ -19,13 +19,13 @@
     "type-check": "tsc -b"
   },
   "dependencies": {
-    "@atproto/oauth-client-browser": "0.5.7",
+    "@atproto/oauth-client-browser": "0.5.8",
     "@tailwindcss/vite": "^4.1.14",
     "@tanstack/react-query": "^5.90.20",
     "ky": "^1.11.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
-    "react-router-dom": "7.18.2",
+    "react-router-dom": "7.18.4",
     "tailwindcss": "^4.1.14"
   },
   "devDependencies": {
@@ -34,8 +34,8 @@
     "@playwright/experimental-ct-react": "^1.56.1",
     "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.0",
-    "@testing-library/user-event": "^14.6.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/node": "^24.6.0",
     "@types/react": "^19.1.16",
     "@types/react-dom": "^19.1.9",
