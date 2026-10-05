@@ -1,14 +1,14 @@
 # Core API framework
-fastapi==0.139.0
-uvicorn[standard]==0.38.0
+fastapi==0.142.2
+uvicorn[standard]==0.54.0
 
 # Database
-sqlalchemy==2.0.44
-psycopg[binary]==3.2.10
-alembic==1.17.0
+sqlalchemy==2.1.2
+psycopg[binary]==3.3.6
+alembic==1.20.0
 
 # YouTube and media processing
-yt-dlp==2026.7.4
+yt-dlp==2026.8.19
 
 # Whisper transcription backends
 faster-whisper==1.2.0
@@ -20,14 +20,14 @@ pyannote.audio==4.0.1
 
 # Core dependencies
 # Audited Python 3.11 runtime pin; GPU image variants use the same version.
-numpy==2.2.6
+numpy==2.4.6
 python-dotenv==1.2.2
-pydantic==2.12.3
-pydantic-settings==2.11.0
+pydantic==2.13.5
+pydantic-settings==2.15.0
 requests==2.34.2
 
 # Authentication
-Authlib==1.7.2
+Authlib==1.8.0
 httpx==0.28.1  # Required by Authlib's Starlette async OAuth client
 itsdangerous==2.2.0  # Required for session middleware
 
@@ -35,7 +35,7 @@ itsdangerous==2.2.0  # Required for session middleware
 reportlab==4.4.4
 
 # Metrics and monitoring
-prometheus-client==0.21.0
+prometheus-client==0.26.0
 
 # Rate limiting
 slowapi==0.1.9
