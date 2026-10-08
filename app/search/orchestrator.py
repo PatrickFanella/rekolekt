@@ -28,7 +28,7 @@ from app.search.highlights import (
     normalize_search_rows,
     parse_highlighted_snippet,
 )
-from app.search.outbox import search_freshness
+from app.search.outbox import search_index_freshness
 from app.search.repositories import PostgresSearchBackend
 from app.search.service import SearchService
 from app.search.types import SearchRequest
@@ -222,7 +222,7 @@ class SearchOrchestrator:
                     total or len(hits),
                     query_time_ms,
                 )
-            freshness = search_freshness(db)
+            freshness = search_index_freshness(db)
             return SearchResponse(
                 total=total,
                 hits=hits,
@@ -449,7 +449,7 @@ class SearchOrchestrator:
                 len(hits),
                 query_time_ms,
             )
-        freshness = search_freshness(db)
+        freshness = search_index_freshness(db)
         return SearchResponse(
             total=None,
             hits=hits,
