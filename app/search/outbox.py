@@ -8,6 +8,22 @@ from datetime import datetime, timezone
 from sqlalchemy import text
 
 
+def search_index_freshness(db) -> dict:
+    """Read response metadata without counting the complete indexing backlog."""
+    row = db.execute(text("""
+            SELECT
+                (SELECT MAX(indexed_at) FROM search_index_checkpoints) AS indexed_at,
+                (SELECT created_at FROM search_index_outbox
+                 WHERE processed_at IS NULL AND dead_lettered_at IS NULL
+                 ORDER BY created_at LIMIT 1) AS oldest
+        """)).mappings().one()
+    if not isinstance(row, Mapping):
+        return {"indexed_at": None, "index_lag_seconds": 0}
+    oldest = row["oldest"]
+    lag = max(0, int((datetime.now(timezone.utc) - oldest).total_seconds())) if oldest else 0
+    return {"indexed_at": row["indexed_at"], "index_lag_seconds": lag}
+
+
 def search_freshness(db) -> dict:
     row = db.execute(text("""
             SELECT c.indexed_at,

@@ -88,7 +88,7 @@ def test_search_orchestrator_anonymous_search_skips_history(monkeypatch):
     monkeypatch.setattr(search_analytics, "save_search_history", save_history)
     monkeypatch.setattr("app.search.orchestrator.PostgresSearchBackend", lambda _db: FakeBackend())
     freshness = MagicMock(side_effect=RuntimeError("external index backlog is unavailable"))
-    monkeypatch.setattr("app.search.orchestrator.search_freshness", freshness)
+    monkeypatch.setattr("app.search.orchestrator.search_index_freshness", freshness)
 
     result = SearchOrchestrator().search(db, request, q="hello", source="native")
 
@@ -225,7 +225,7 @@ def test_opensearch_fallback_converts_postgres_mapping_highlights(monkeypatch):
         lambda *_args, **_kwargs: SearchRequestContext(user_id=None, is_admin=False),
     )
     monkeypatch.setattr(
-        "app.search.orchestrator.search_freshness",
+        "app.search.orchestrator.search_index_freshness",
         lambda _db: {"indexed_at": None, "index_lag_seconds": 0},
     )
 
