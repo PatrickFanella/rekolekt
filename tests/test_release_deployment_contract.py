@@ -1300,7 +1300,16 @@ def test_release_workflow_contracts() -> None:
     assert '"${{ steps.python.outputs.python-path }}" -m venv .release-venv' in setup_text
     assert ".release-venv/bin/python -m pip install --upgrade pip" in setup_text
     assert ".release-venv/bin/python -m pip install setuptools==83.0.0" in setup_text
-    assert ".release-venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt" in setup_text
+    requirements_install = shlex.split(next(line for line in setup_text.splitlines() if "-r requirements.txt" in line))
+    assert requirements_install[:4] == [".release-venv/bin/python", "-m", "pip", "install"]
+    assert {"requirements.txt", "requirements-dev.txt"} <= {
+        requirements_install[index + 1] for index, arg in enumerate(requirements_install) if arg == "-r"
+    }
+    assert {"constraints.txt", "requirements-ml-runtime.txt"} <= {
+        requirements_install[index + 1] for index, arg in enumerate(requirements_install) if arg == "-c"
+    }
+    assert ".release-venv/bin/python -m pip check" in setup_text
+    assert ".release-venv/bin/python scripts/verify_ml_runtime.py" in setup_text
     assert '${{ steps.python.outputs.python-path }}" -m pip install' not in setup_text
     assert "PYTHON_BIN: ${{ steps.python.outputs.python-path }}" not in verification_text
     assert (
