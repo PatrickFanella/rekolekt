@@ -28,6 +28,7 @@ from app.search.highlights import (
     normalize_search_rows,
     parse_highlighted_snippet,
 )
+from app.search.mention_cache import cached_mention_map
 from app.search.outbox import search_index_freshness
 from app.search.repositories import PostgresSearchBackend
 from app.search.service import SearchService
@@ -536,7 +537,7 @@ class SearchOrchestrator:
         if match_mode != "topic":
             filters["match_mode"] = match_mode
         context = search_analytics.record_search_request(request, db, q, source)
-        result = crud.get_mention_map(
+        result = cached_mention_map(
             db,
             q=q,
             source=source,
