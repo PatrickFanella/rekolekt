@@ -37,13 +37,39 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.11'
-      - name: Create isolated Python verification environment
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
+            requirements-ml-runtime.txt
+            constraints.txt
+      - name: Install FFmpeg shared libraries for the speech runtime
+        shell: bash
         run: |
+          set -euo pipefail
+          privilege=()
+          if [[ "$(id -u)" != 0 ]]; then
+            privilege=(sudo)
+          fi
+          "${privilege[@]}" apt-get update -q
+          "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
+      - name: Create isolated Python verification environment
+        shell: bash
+        run: |
+          set -euo pipefail
           rm -rf -- .release-venv
           "${{ steps.python.outputs.python-path }}" -m venv .release-venv
           .release-venv/bin/python -m pip install --upgrade pip
           .release-venv/bin/python -m pip install setuptools==83.0.0
-          .release-venv/bin/python -m pip install -r requirements.txt -r requirements-dev.txt
+          # Keep the full ML test surface, using the same pinned CPU wheels as Dockerfile.cpu.
+          mapfile -t ml_wheels < <(grep -E '^(torch|torchaudio|torchcodec)==' requirements-ml-runtime.txt)
+          [[ "${#ml_wheels[@]}" == 3 ]]
+          .release-venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu "${ml_wheels[@]}"
+          .release-venv/bin/python -m pip install -c constraints.txt -c requirements-ml-runtime.txt -r requirements.txt -r requirements-dev.txt
+          .release-venv/bin/python -m pip check
+          .release-venv/bin/python scripts/verify_ml_runtime.py
+          .release-venv/bin/python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__"
       - name: Run canonical verification
         run: |
           set -euo pipefail
