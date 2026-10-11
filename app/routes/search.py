@@ -21,11 +21,12 @@ from ..schemas import (
 from ..search.analytics import get_popular_searches as _get_popular_searches
 from ..search.analytics import get_search_analytics as _get_search_analytics
 from ..search.analytics import get_search_suggestions as _get_search_suggestions
+from ..search.budget import anonymous_search_budget
 from ..search.mention_exports import mention_collection, render_mention_export
 from ..search.orchestrator import SearchOrchestrator
 from ..settings import settings
 
-router = APIRouter(prefix="", tags=["Search"])
+router = APIRouter(prefix="", tags=["Search"], dependencies=[Depends(anonymous_search_budget)])
 _search_orchestrator = SearchOrchestrator()
 
 
