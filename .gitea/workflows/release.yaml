@@ -44,7 +44,9 @@ jobs:
             requirements-ml-runtime.txt
             constraints.txt
       - name: Create isolated Python verification environment
+        shell: bash
         run: |
+          set -euo pipefail
           rm -rf -- .release-venv
           "${{ steps.python.outputs.python-path }}" -m venv .release-venv
           .release-venv/bin/python -m pip install --upgrade pip
