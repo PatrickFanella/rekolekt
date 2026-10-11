@@ -30,6 +30,17 @@ jobs:
             requirements-dev.txt
             requirements-ml-runtime.txt
             constraints.txt
+      - name: Install FFmpeg shared libraries for the speech runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          privilege=()
+          if [[ "$(id -u)" != 0 ]]; then
+            privilege=(sudo)
+          fi
+          "${privilege[@]}" apt-get update -q
+          "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+          ffmpeg -version
       - name: Create isolated Python verification environment
         shell: bash
         run: |
