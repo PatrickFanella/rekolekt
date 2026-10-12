@@ -20,6 +20,7 @@ permissions:
 
 jobs:
   backend-image:
+    timeout-minutes: 120
     runs-on: switchyard-production
     steps:
       - name: Authorize selective application release
