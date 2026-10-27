@@ -1299,7 +1299,7 @@ def test_release_workflow_contracts() -> None:
     assert "rm -rf -- .release-venv" in setup_text
     assert '"${{ steps.python.outputs.python-path }}" -m venv .release-venv' in setup_text
     assert ".release-venv/bin/python -m pip install --upgrade pip" in setup_text
-    assert ".release-venv/bin/python -m pip install setuptools==83.0.0" in setup_text
+    assert ".release-venv/bin/python -m pip install setuptools==84.1.0" in setup_text
     requirements_install = shlex.split(next(line for line in setup_text.splitlines() if "-r requirements.txt" in line))
     assert requirements_install[:4] == [".release-venv/bin/python", "-m", "pip", "install"]
     assert {"requirements.txt", "requirements-dev.txt"} <= {
