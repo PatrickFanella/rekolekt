@@ -4,6 +4,8 @@ Anonymous full-text search, grouped search, mention maps and both search exports
 
 A separate checked-out connection holds each lock until the request finishes, even when analytics commits the request transaction. Cleanup unlocks explicitly; failed cleanup invalidates the connection so a held lock cannot return to the pool. Process death closes connections and releases locks. No schema migration is required.
 
+PostgreSQL cancellation (`57014`, including `statement_timeout`) ends the database attempt after rollback. It is not retried as a transient connection failure. This keeps a cancelled expensive query from repeatedly consuming its admission slot; ordinary connection-error retry behavior remains unchanged.
+
 Mention maps cache public results in Redis for 60 seconds using all search parameters in a SHA-256 key. Authentication and analytics run on every request. Redis failure falls back to a bounded uncached search. This reduces repeated queries but does not eliminate first visits to different topics.
 
 

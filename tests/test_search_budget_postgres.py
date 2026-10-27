@@ -10,8 +10,11 @@ from hashlib import sha256
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 from starlette.requests import Request
 
+from app import crud
 from app.logging_config import user_id_ctx
 from app.search import budget
 
@@ -123,3 +126,33 @@ def test_only_database_validated_sessions_are_exempt(db_session, test_engine, mo
     finally:
         held.close()
         user_id_ctx.reset(context_token)
+
+
+def test_statement_timeout_is_not_retried_and_releases_admission(test_engine, monkeypatch):
+    namespace = 1902000000 + os.getpid() % 1000000
+    monkeypatch.setattr(budget, "engine", test_engine)
+    monkeypatch.setattr(budget, "LOCK_NAMESPACE", namespace)
+    calls = []
+
+    @crud._retry_on_transient_error
+    def expensive_query(db):
+        calls.append(True)
+        db.execute(text("SELECT pg_sleep(0.1)"))
+
+    with Session(test_engine) as db:
+        db.execute(text("SET LOCAL statement_timeout='20ms'"))
+        admission = budget.anonymous_search_budget(request(), db)
+        next(admission)
+        try:
+            with pytest.raises(OperationalError) as error:
+                expensive_query(db)
+            assert error.value.orig.sqlstate == "57014"
+            assert len(calls) == 1
+            assert db.execute(text("SELECT 1")).scalar_one() == 1
+        finally:
+            admission.close()
+    with test_engine.connect() as conn:
+        assert conn.execute(
+            text("SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND classid=:namespace"),
+            {"namespace": namespace},
+        ).scalar_one() == 0
