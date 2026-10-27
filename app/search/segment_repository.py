@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import text
 
+from app.logging_config import request_id_ctx
 from app.search.highlights import POSTGRES_HEADLINE_OPTIONS, normalize_search_rows
+
+
+def _execute_search(db, sql: str, params: dict[str, Any]):
+    # Correlate pg_stat_activity with admission logs without embedding search
+    # text, cookies, or user identifiers. Only server-generated UUIDs are SQL.
+    request_id = request_id_ctx.get()
+    if request_id:
+        try:
+            correlation = str(UUID(request_id))
+        except (ValueError, TypeError, AttributeError):
+            pass
+        else:
+            sql = f"/* hasanara.search request_id={correlation} */\n{sql}"
+    return db.execute(text(sql), params)
 
 
 def _match_expressions(
@@ -57,13 +73,14 @@ class SearchRepository:
             "q": q,
             "limit": limit,
             "offset": offset,
+            "branch_limit": limit + offset + 1,
             "headline_options": POSTGRES_HEADLINE_OPTIONS,
         }
         params["title_q"] = f"%{q.strip()}%"
         text_match, highlighted_text, text_rank, title_match = _match_expressions("s", q, filters, params)
 
         # Search transcript text and video title so newly processed videos are discoverable.
-        where_clauses = [f"({text_match} OR {title_match})"]
+        where_clauses = []
 
         if video_id:
             where_clauses.append("s.video_id = :vid")
@@ -128,15 +145,37 @@ class SearchRepository:
         if needs_video_join:
             from_clause = "segments s JOIN videos v ON s.video_id = v.id"
 
+        # The cross-table OR prevented the GIN predicate from narrowing the
+        # transcript scan. Disjoint branches retain every title-only segment
+        # and avoid duplicating segments which match both text and title.
+        text_where = [text_match, *where_clauses]
+        title_where = [title_match, f"({text_match}) IS NOT TRUE", *where_clauses]
+        result_order = order_by.replace("v.", "").replace("s.", "")
         sql = f"""
-            SELECT {select_fields}
-            FROM {from_clause}
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY {order_by}
+            WITH native_text_hits AS (
+                SELECT {select_fields}, v.uploaded_at, v.duration_seconds
+                FROM {from_clause}
+                WHERE {" AND ".join(text_where)}
+                ORDER BY {order_by}
+                LIMIT :branch_limit
+            ), native_title_hits AS (
+                SELECT {select_fields}, v.uploaded_at, v.duration_seconds
+                FROM {from_clause}
+                WHERE {" AND ".join(title_where)}
+                ORDER BY {order_by}
+                LIMIT :branch_limit
+            )
+            SELECT id, video_id, start_ms, end_ms, snippet, rank, title_match
+            FROM (
+                SELECT * FROM native_text_hits
+                UNION ALL
+                SELECT * FROM native_title_hits
+            ) native_hits
+            ORDER BY {result_order}
             LIMIT :limit OFFSET :offset
         """
 
-        rows = db.execute(text(sql), params).mappings().all()
+        rows = _execute_search(db, sql, params).mappings().all()
 
         # Track search query metric
         search_queries_total.labels(backend="postgres").inc()
@@ -240,7 +279,7 @@ class SearchRepository:
                 FROM youtube_segments ys
                 JOIN youtube_transcripts yt ON yt.id = ys.youtube_transcript_id
                 JOIN videos v ON yt.video_id = v.id
-                WHERE {' AND '.join(text_where)}
+                WHERE {" AND ".join(text_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
             ), title_candidates AS (
@@ -265,7 +304,7 @@ class SearchRepository:
                     ORDER BY segment.start_ms ASC
                     LIMIT 1
                 ) ys ON true
-                WHERE {' AND '.join(title_where)}
+                WHERE {" AND ".join(title_where)}
                 ORDER BY yt.video_id, ys.start_ms ASC
             ), title_hits AS (
                 SELECT * FROM title_candidates
@@ -283,7 +322,7 @@ class SearchRepository:
             LIMIT :limit OFFSET :offset
         """
 
-        rows = db.execute(text(sql), params).mappings().all()
+        rows = _execute_search(db, sql, params).mappings().all()
         return normalize_search_rows(rows)
 
     def search_best(
@@ -406,7 +445,7 @@ class SearchRepository:
                     v.channel_name
                 FROM segments s
                 JOIN videos v ON s.video_id = v.id
-                WHERE {' AND '.join(native_where)}
+                WHERE {" AND ".join(native_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
             ), native_title_hits AS (
@@ -431,7 +470,7 @@ class SearchRepository:
                     ORDER BY segment.start_ms ASC
                     LIMIT 1
                 ) s ON true
-                WHERE {' AND '.join(native_title_where)}
+                WHERE {" AND ".join(native_title_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
             ), youtube_text_hits AS (
@@ -454,7 +493,7 @@ class SearchRepository:
                 FROM youtube_segments ys
                 JOIN youtube_transcripts yt ON yt.id = ys.youtube_transcript_id
                 JOIN videos v ON yt.video_id = v.id
-                WHERE {' AND '.join(youtube_where)}
+                WHERE {" AND ".join(youtube_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
             ), youtube_title_candidates AS (
@@ -480,7 +519,7 @@ class SearchRepository:
                     ORDER BY segment.start_ms ASC
                     LIMIT 1
                 ) ys ON true
-                WHERE {' AND '.join(youtube_title_where)}
+                WHERE {" AND ".join(youtube_title_where)}
                 ORDER BY video_id, start_ms ASC
             ), youtube_title_hits AS (
                 SELECT * FROM youtube_title_candidates
@@ -501,6 +540,6 @@ class SearchRepository:
             ORDER BY {order_by}
             LIMIT :limit OFFSET :offset
         """
-        rows = db.execute(text(sql), params).mappings().all()
+        rows = _execute_search(db, sql, params).mappings().all()
         search_queries_total.labels(backend="postgres").inc()
         return normalize_search_rows(rows)

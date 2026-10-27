@@ -1,5 +1,6 @@
 """Admission, cleanup, authentication and cache isolation regression checks."""
 
+import logging
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -118,6 +119,30 @@ class CacheTests(unittest.TestCase):
         self.redis.get.return_value = "broken JSON"
         self.assertEqual(mention_cache.cached_mention_map(object(), q="topic"), self.result)
         self.search.assert_called_once()
+
+
+def test_admission_attribution_omits_queries_and_credentials(caplog, monkeypatch):
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.execute.return_value.scalar_one.return_value = True
+    engine = MagicMock()
+    engine.connect.return_value = connection
+    monkeypatch.setattr(budget, "engine", engine)
+    monkeypatch.setattr(budget, "get_user_from_session", lambda *_: None)
+    req = request(cookie="tc_session=private-session")
+    req.scope["query_string"] = b"q=private-search-text&token=private-token"
+    req.state.request_id = "d3ff25d4-d46c-4b13-808a-c8575ab55820"
+    with caplog.at_level(logging.INFO, logger=budget.__name__):
+        admission = budget.anonymous_search_budget(req, object())
+        next(admission)
+        admission.close()
+    records = [r for r in caplog.records if r.name == budget.__name__]
+    assert [r.admission for r in records] == ["accepted", "released"]
+    assert all(r.caller_class == "anonymous" and r.path == "/search/mention-map" for r in records)
+    assert all(r.request_id == req.state.request_id for r in records)
+    serialized = str([r.__dict__ for r in records])
+    for secret in ["private-session", "private-search-text", "private-token"]:
+        assert secret not in serialized
 
 
 if __name__ == "__main__":
