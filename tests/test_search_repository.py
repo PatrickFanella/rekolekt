@@ -2,9 +2,9 @@ import pytest
 from sqlalchemy import text
 
 from app import crud
-from app.search.highlights import HIGHLIGHT_END, HIGHLIGHT_START, POSTGRES_HEADLINE_OPTIONS
+from app.search.highlights import HIGHLIGHT_END, HIGHLIGHT_START, POSTGRES_HEADLINE_OPTIONS, normalize_search_rows
 from app.search.repositories import PostgresSearchBackend
-from app.search.segment_repository import SearchRepository
+from app.search.segment_repository import SearchRepository, _match_expressions
 from app.search.types import SearchRequest
 
 
@@ -27,6 +27,70 @@ class FakeDB:
     def execute(self, statement, params):
         self.calls.append({"statement": statement, "params": params})
         return FakeResult(self.rows)
+
+
+@pytest.mark.parametrize("mode", ["topic", "whole_word", "exact_phrase"])
+@pytest.mark.parametrize("sort", ["relevance", "date_desc", "date_asc", "duration_desc", "duration_asc"])
+@pytest.mark.parametrize("filtered", [False, True])
+def test_native_branch_search_preserves_or_query_results(db_session, mode, sort, filtered):
+    for sql in [
+        "CREATE TEMP TABLE videos (id text, title text, uploaded_at timestamptz, duration_seconds int, "
+        "channel_name text, category text, language text) ON COMMIT DROP",
+        "CREATE TEMP TABLE segments (id bigint, video_id text, start_ms int, end_ms int, text text, "
+        "text_tsv tsvector, speaker_label text) ON COMMIT DROP",
+        "INSERT INTO videos VALUES ('v1','needle','2026-01-01',100,'one','news','en'), "
+        "('v2','other','2026-02-01',200,'two','news','fr')",
+        "INSERT INTO segments VALUES "
+        "(1,'v1',100,200,'needle',to_tsvector('english','needle'),'speaker'), "
+        "(2,'v1',200,300,'unrelated',to_tsvector('english','unrelated'),NULL), "
+        "(3,'v1',300,400,NULL,NULL,NULL), "
+        "(4,'v2',400,500,'needle needle',to_tsvector('english','needle needle'),NULL)",
+    ]:
+        db_session.execute(text(sql))
+    filters = {"match_mode": mode}
+    if filtered:
+        filters.update(language="en", has_speaker_labels=False)
+    capture = FakeDB([])
+    SearchRepository().search_native(capture, q="needle", limit=2, offset=1, sort_by=sort, filters=filters)
+    params = capture.calls[0]["params"]
+    match, headline, rank, title_match = _match_expressions("s", "needle", filters, params)
+    order = {
+        "relevance": "rank DESC, title_match DESC, s.start_ms ASC",
+        "date_desc": "v.uploaded_at DESC NULLS LAST, s.start_ms ASC",
+        "date_asc": "v.uploaded_at ASC NULLS LAST, s.start_ms ASC",
+        "duration_desc": "v.duration_seconds DESC NULLS LAST, s.start_ms ASC",
+        "duration_asc": "v.duration_seconds ASC NULLS LAST, s.start_ms ASC",
+    }[sort]
+    extra = "AND v.language = :language AND s.speaker_label IS NULL" if filtered else ""
+    original = f"""
+        SELECT s.id,s.video_id,s.start_ms,s.end_ms,
+            CASE WHEN {match} THEN {headline} ELSE coalesce(v.title,s.text) END AS snippet,
+            {rank} AS rank, CASE WHEN {title_match} THEN 1 ELSE 0 END AS title_match
+        FROM segments s JOIN videos v ON s.video_id=v.id
+        WHERE ({match} OR {title_match}) {extra}
+        ORDER BY {order} LIMIT :limit OFFSET :offset
+    """
+    expected = normalize_search_rows(db_session.execute(text(original), params).mappings().all())
+    actual = SearchRepository().search_native(db_session, q="needle", limit=2, offset=1, sort_by=sort, filters=filters)
+    assert actual == expected
+    assert len({r["id"] for r in actual}) == len(actual)
+
+
+def test_search_statement_correlates_only_valid_server_request_ids():
+    from app.logging_config import request_id_ctx
+
+    token = request_id_ctx.set("d3ff25d4-d46c-4b13-808a-c8575ab55820")
+    try:
+        db = FakeDB([])
+        SearchRepository().search_native(db, q="private query")
+        sql = str(db.calls[0]["statement"])
+        assert sql.startswith("/* hasanara.search request_id=d3ff25d4-d46c-4b13-808a-c8575ab55820 */")
+        assert "private query" not in sql
+        request_id_ctx.set("untrusted */ SELECT 'not a UUID'")
+        SearchRepository().search_native(db, q="private query")
+        assert "untrusted" not in str(db.calls[-1]["statement"])
+    finally:
+        request_id_ctx.reset(token)
 
 
 @pytest.mark.parametrize("method", ["search_youtube", "search_best"])

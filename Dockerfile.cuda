@@ -63,7 +63,7 @@ COPY scripts/verify_ml_runtime.py /tmp/verify_ml_runtime.py
 # Use BuildKit cache mount to persist pip cache across builds. The pinned
 # openai-whisper sdist needs a non-isolated metadata build on Python 3.10.
 RUN --mount=type=cache,target=/root/.cache/pip \
-    pip3 install --no-cache-dir --upgrade pip==26.2 setuptools==83.0.0 wheel==0.47.0 && \
+    pip3 install --no-cache-dir --upgrade pip==26.2 setuptools==84.1.0 wheel==0.47.0 && \
     pip3 install --no-cache-dir --only-binary=:all: --index-url https://pypi.org/simple \
         -r requirements-cuda-bootstrap.txt && \
     TORCH_VERSION="$(sed -n 's/^torch==//p' requirements-ml-runtime.txt)" && \

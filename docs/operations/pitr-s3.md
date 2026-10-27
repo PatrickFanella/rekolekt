@@ -62,6 +62,13 @@ and integrity result before rehearsing additive migrations. Never run
 `backup-fetch` over live PGDATA and never rehearse against the production
 database. A logical restore is supplemental evidence, not PITR proof.
 
+A physical backup can carry old recovery targets in `postgresql.auto.conf`.
+Inspect those settings and clear every conflicting target before selecting the
+rehearsal's target; PostgreSQL rejects multiple targets. Run the restored
+instance with archiving disabled so its promoted timeline and WAL cannot be
+uploaded into the production archive. Record the backup endpoint's actual
+storage location: S3 compatibility alone does not establish offsite storage.
+
 ## Retention and rollback
 
 The weekly job runs `backup-push` and, only when it succeeds, `wal-g delete

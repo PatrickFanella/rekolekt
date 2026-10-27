@@ -37,6 +37,13 @@ def _retry_on_transient_error(func):
                 db = args[0] if args else kwargs.get("db")
                 if hasattr(db, "rollback"):
                     db.rollback()
+                # PostgreSQL uses the same cancellation state for an explicit
+                # cancel and statement_timeout. Repeating that expensive query
+                # defeats the caller's deadline and keeps its admission slot.
+                sqlstate = getattr(e.orig, "sqlstate", None) or getattr(e.orig, "pgcode", None)
+                if sqlstate == "57014":
+                    logger.info("Database query cancelled", extra={"attempts": attempt + 1, "sqlstate": sqlstate})
+                    raise
                 error_msg = str(e).lower()
                 # Check if it's a transient error worth retrying
                 if any(

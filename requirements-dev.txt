@@ -9,12 +9,12 @@ httpx==0.28.1
 pytest-httpx==0.36.2
 pytest-timeout==2.3.1
 pytest-xdist==3.6.1
-pypdf==6.19.0
+pypdf==6.21.2
 openapi-spec-validator==0.7.1
 
 # Linting and formatting
 ruff==0.9.1
-black==26.3.1
+black==26.10.1
 isort==6.1.0
 mypy==1.14.1
 types-requests==2.33.0.20260327
