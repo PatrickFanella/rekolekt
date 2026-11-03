@@ -27,7 +27,7 @@ pydantic-settings==2.11.0
 requests==2.34.2
 
 # Authentication
-Authlib==1.7.2
+Authlib==1.9.1
 httpx==0.28.1  # Required by Authlib's Starlette async OAuth client
 itsdangerous==2.2.0  # Required for session middleware
 
