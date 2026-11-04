@@ -57,6 +57,20 @@
       "sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
       "source_sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d",
       "transformation": "Normalize line endings and trailing whitespace; license text unchanged."
+    },
+    {
+      "source": "branding/2026-10-01-packs/brands/rekolekt/logos/mark-primary-outlined.svg",
+      "destination": "landing/favicon.ico",
+      "sha256": "5bad215355c23d183978f63abb90c1dc0a314433b3fc61023a52121e6e1fc778",
+      "source_sha256": "8deb1ca24f642bdaefc2eb1ee4c78142959a0eefa0835dbdc43bd5f6401f48ca",
+      "transformation": "Derived; the pack has no ICO. rsvg-convert at 16, 32 and 48 px, combined with ImageMagick."
+    },
+    {
+      "source": "branding/2026-10-01-packs/brands/rekolekt/logos/mark-primary-outlined.svg",
+      "destination": "landing/apple-touch-icon.png",
+      "sha256": "7a83c3a30fdcfaacab21834a25cf0004cd1e74833827c180a5af943946c63688",
+      "source_sha256": "8deb1ca24f642bdaefc2eb1ee4c78142959a0eefa0835dbdc43bd5f6401f48ca",
+      "transformation": "Derived; the pack has no touch icon. rsvg-convert at 180 px on base #16201b."
     }
   ]
 }

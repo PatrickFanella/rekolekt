@@ -43,6 +43,14 @@ whenever one of those files changes.
 Check the rendered desktop and narrow layouts, search matches and empty results,
 passage selection, keyboard access, FAQ disclosure, local fonts and images.
 
+## Icons
+
+The pack has no ICO or touch icon, so `favicon.ico` (16, 32 and 48 px) and
+`apple-touch-icon.png` (180 px on base `#16201b`) are rendered from
+`brand/logos/mark-primary-outlined.svg` with rsvg-convert; ImageMagick combines
+the ICO sizes. Their hashes are in the provenance file. Re-render both if the
+mark changes.
+
 ## Deployment
 
 Build the `landing/` Docker context with a revision-specific image tag. Set
