@@ -356,3 +356,95 @@ class TestRetryDecorator:
 
         operation(db)
         assert db.rollback.call_count == 1
+
+
+def test_mention_map_cites_transcript_moments_before_title_matches(monkeypatch):
+    video_id = uuid.uuid4()
+    video = VideoInfo(
+        id=video_id,
+        youtube_id="video-1",
+        title="Housing crisis deep dive",
+        uploaded_at=datetime(2026, 6, 3, tzinfo=timezone.utc),
+    )
+
+    def moment(index, snippet, title_match=False):
+        return SearchMoment(
+            id=index,
+            video_id=video_id,
+            start_ms=index * 1000,
+            end_ms=index * 1000 + 500,
+            snippet=snippet,
+            source="whisper",
+            uploaded_at=video.uploaded_at,
+            title_match=title_match,
+        )
+
+    page = GroupedSearchResponse(
+        total_moments=4,
+        total_videos=1,
+        groups=[
+            EpisodeSearchGroup(
+                video=video,
+                moments=[
+                    moment(1, "Housing crisis deep dive", title_match=True),
+                    moment(2, "Rent control is the housing fight landlords dread."),
+                    moment(3, "The housing supply numbers are what landlords ignore."),
+                    moment(4, "Rent and landlords again, the housing story never ends."),
+                ],
+            )
+        ],
+        query_time_ms=1,
+    )
+    monkeypatch.setattr(crud, "get_grouped_search", lambda *_args, **_kwargs: page)
+
+    result = crud.get_mention_map(MagicMock(), q="housing", limit=10)
+
+    assert result.total_moments == 4
+    assert result.first_mention.id == 2
+    assert result.latest_mention.id == 4
+    assert not result.first_mention.title_match
+    assert result.related_topics[:2] == ["landlords", "rent"]
+    assert not {"deep", "dive"} & set(result.related_topics)
+
+
+def test_mention_map_falls_back_to_title_matches_when_nothing_was_spoken(monkeypatch):
+    video_id = uuid.uuid4()
+    video = VideoInfo(id=video_id, youtube_id="video-1", title="Debate night")
+    page = GroupedSearchResponse(
+        total_moments=1,
+        total_videos=1,
+        groups=[
+            EpisodeSearchGroup(
+                video=video,
+                moments=[
+                    SearchMoment(
+                        id=1, video_id=video_id, start_ms=0, end_ms=500, snippet="Debate night", title_match=True
+                    )
+                ],
+            )
+        ],
+        query_time_ms=1,
+    )
+    monkeypatch.setattr(crud, "get_grouped_search", lambda *_args, **_kwargs: page)
+
+    result = crud.get_mention_map(MagicMock(), q="debate", limit=10)
+
+    assert result.first_mention.title_match is True
+    assert result.related_topics == []
+
+
+def test_related_terms_skip_fillers_and_rank_terms_heard_in_more_videos():
+    def moment(index, video, snippet):
+        return SearchMoment(
+            id=index, video_id=video, start_ms=index, end_ms=index + 1, snippet=snippet, source="whisper"
+        )
+
+    video_a, video_b = uuid.uuid4(), uuid.uuid4()
+    moments = [
+        moment(1, video_a, "Every union election that workers win makes the next labor fight a little easier."),
+        moment(2, video_a, "Workers keep winning union votes and the labor movement notices."),
+        moment(3, video_b, "The labor movement is having its biggest year and the union drives prove it."),
+        moment(4, video_b, "Amazon workers organised and the labor press finally covered it."),
+    ]
+
+    assert crud.related_terms("labor", moments) == ["union", "workers", "movement"]

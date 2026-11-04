@@ -2127,7 +2127,7 @@
         "properties": {
           "creator_name": {
             "default": "Transcript Archive",
-            "description": "Archive display name",
+            "description": "Archive display name (the site name, kept under this field name for compatibility); the creator's name is the site profile's creator_name",
             "title": "Creator Name",
             "type": "string"
           },
@@ -5739,6 +5739,12 @@
             "title": "Start Ms",
             "type": "integer"
           },
+          "title_match": {
+            "default": false,
+            "description": "True when the query matched the video title rather than the transcript; the snippet is then the title and the timestamp is the first transcript segment",
+            "title": "Title Match",
+            "type": "boolean"
+          },
           "uploaded_at": {
             "anyOf": [
               {
@@ -5861,6 +5867,12 @@
             "minimum": 0.0,
             "title": "Start Ms",
             "type": "integer"
+          },
+          "title_match": {
+            "default": false,
+            "description": "True when the query matched the video title rather than the transcript; the snippet is then the title and the timestamp is the first transcript segment",
+            "title": "Title Match",
+            "type": "boolean"
           },
           "uploaded_at": {
             "anyOf": [

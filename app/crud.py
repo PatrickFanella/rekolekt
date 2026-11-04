@@ -1,5 +1,6 @@
 import functools
 import json
+import re
 import time
 import uuid
 from datetime import date
@@ -638,6 +639,7 @@ def get_grouped_search(
                 channel_name=video.channel_name,
                 uploaded_at=video.uploaded_at,
                 duration_seconds=video.duration_seconds,
+                title_match=bool(row.get("title_match")),
             )
         )
 
@@ -648,6 +650,62 @@ def get_grouped_search(
         query_time_ms=int((time.time() - start_time) * 1000),
         page_info=page_info,
     )
+
+
+# Function words, discourse fillers and generic qualifiers that co-occur with
+# every topic. Related terms should name a subject, not describe one.
+_RELATED_TERM_STOPWORDS = frozenset("""
+    about above actually after again against ahead almost along already also although always among
+    another anybody anyone anything anyway anywhere around away basically because been before behind
+    being below best better between beyond bigger biggest both bring brought called came cannot
+    certainly chat coming could couldn't definitely didn't does doesn't doing done don't down during
+    each early easier easiest easy either else enough even ever every everybody everyone everything
+    everywhere exactly feel feels felt few find first five four from front further gave genuinely
+    gets getting give given gives goes going gone gonna good gotta great guess guys happen happened
+    happens hard have haven't having hear heard here high higher honestly however huge idea isn't
+    just keep kept kind kinda know knows large last later least less let's like likely literally
+    little long longer look looked looking looks lots made make makes making many matter maybe mean
+    means meant might mine more most much must need needs never next nothing obviously okay once
+    only other others ought over part people person place point pretty probably quite rather real
+    really right said same saying says seem seemed seems seen several should shouldn't show since
+    small some somebody someone something sometimes somewhere sort sorta start started still stuff
+    such sure take taken takes taking talk talked talking tell than thank thanks that that's their
+    theirs them then there there's these they they're thing things think thinks this those though
+    thought three through time times today told took totally toward true truly trying twice under
+    until upon used very want wanted wants wasn't watch week went were weren't what what's whatever
+    when whenever where whether which while whole whose will with within without won't worse worst
+    would wouldn't yeah years you'll your you're yours yourself
+    """.split())
+
+
+def related_terms(q: str, moments, limit: int = 5) -> list[str]:
+    """Return subject words that recur across cited transcript snippets.
+
+    A term must appear in at least two distinct moments once the result set is
+    large enough to make a single co-occurrence meaningless, and terms heard in
+    more videos rank ahead of terms repeated inside one broadcast.
+    """
+    query_terms = {term.lower() for term in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", q)}
+    moment_counts: dict[str, int] = {}
+    video_sets: dict[str, set[str]] = {}
+    for moment in moments:
+        seen: set[str] = set()
+        for raw_term in re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", moment.snippet or ""):
+            term = raw_term.strip("'-").lower()
+            if len(term) < 4 or term in _RELATED_TERM_STOPWORDS or term in query_terms:
+                continue
+            if any(term.startswith(query_term) or query_term.startswith(term) for query_term in query_terms):
+                continue
+            seen.add(term)
+        for term in seen:
+            moment_counts[term] = moment_counts.get(term, 0) + 1
+            video_sets.setdefault(term, set()).add(str(moment.video_id))
+    minimum = 2 if len(moments) >= 4 else 1
+    ranked = sorted(
+        ((term, count) for term, count in moment_counts.items() if count >= minimum),
+        key=lambda item: (-len(video_sets[item[0]]), -item[1], item[0]),
+    )
+    return [term for term, _count in ranked[:limit]]
 
 
 @_retry_on_transient_error
@@ -662,7 +720,6 @@ def get_mention_map(
     filters: dict | None = None,
     top_limit: int = 5,
 ):
-    import re
     from datetime import datetime, timedelta, timezone
 
     from app.schemas import EpisodeSearchGroup, MentionMap
@@ -698,6 +755,10 @@ def get_mention_map(
 
     complete_groups = list(groups_by_video.values())
     moments = [moment for group in complete_groups for moment in group.moments]
+    # Title matches cite a video, not a spoken passage: they count as matches but
+    # never stand in as the first or latest mention or as related-term evidence.
+    transcript_moments = [moment for moment in moments if not moment.title_match]
+    citable_moments = transcript_moments or moments
 
     baseline = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -708,7 +769,7 @@ def get_mention_map(
             str(moment.video_id),
         )
 
-    ordered_moments = sorted(moments, key=sort_key)
+    ordered_moments = sorted(citable_moments, key=sort_key)
     first_mention = ordered_moments[0] if ordered_moments else None
     latest_mention = ordered_moments[-1] if ordered_moments else None
 
@@ -731,66 +792,7 @@ def get_mention_map(
     cutoff = now - timedelta(days=90)
     recent_mentions_90d = sum(1 for _moment, uploaded_at in dated_moments if uploaded_at >= cutoff)
 
-    stopwords = {
-        "about",
-        "after",
-        "again",
-        "also",
-        "because",
-        "being",
-        "between",
-        "could",
-        "every",
-        "first",
-        "from",
-        "have",
-        "into",
-        "just",
-        "like",
-        "more",
-        "most",
-        "much",
-        "only",
-        "other",
-        "over",
-        "really",
-        "right",
-        "some",
-        "than",
-        "that",
-        "their",
-        "them",
-        "then",
-        "there",
-        "these",
-        "they",
-        "thing",
-        "this",
-        "those",
-        "through",
-        "time",
-        "very",
-        "what",
-        "when",
-        "where",
-        "which",
-        "with",
-        "would",
-        "your",
-    }
-    query_terms = {term.lower() for term in re.findall(r"[A-Za-z][A-Za-z0-9'-]{2,}", q)}
-    term_counts: dict[str, int] = {}
-    for moment in moments:
-        text_value = moment.snippet or ""
-        seen: set[str] = set()
-        for raw_term in re.findall(r"[A-Za-z][A-Za-z0-9'-]{3,}", text_value):
-            term = raw_term.strip("'-").lower()
-            if term in stopwords or term in query_terms or len(term) < 4:
-                continue
-            seen.add(term)
-        for term in seen:
-            term_counts[term] = term_counts.get(term, 0) + 1
-    related_topics = [term for term, _count in sorted(term_counts.items(), key=lambda item: (-item[1], item[0]))[:5]]
+    related_topics = related_terms(q, transcript_moments)
 
     top_episodes = sorted(
         complete_groups,
