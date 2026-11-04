@@ -28,6 +28,7 @@ class PostgresSearchBackend:
                 snippet=str(row["snippet"] or ""),
                 rank=float(row["rank"]) if row.get("rank") is not None else None,
                 highlights=tuple(row.get("highlights") or ()),
+                title_match=bool(row.get("title_match")),
             )
             for row in rows
         ]

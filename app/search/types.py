@@ -24,6 +24,7 @@ class SearchResult:
     snippet: str
     rank: float | None = None
     highlights: tuple[HighlightRange, ...] = ()
+    title_match: bool = False
 
 
 @dataclass(frozen=True)

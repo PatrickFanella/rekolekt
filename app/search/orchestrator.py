@@ -206,6 +206,7 @@ class SearchOrchestrator:
                         channel_name=None,
                         uploaded_at=None,
                         duration_seconds=None,
+                        title_match=False,
                     )
                 )
             total = (
@@ -259,6 +260,7 @@ class SearchOrchestrator:
                     channel_name=r.get("channel_name"),
                     uploaded_at=r.get("uploaded_at"),
                     duration_seconds=r.get("duration_seconds"),
+                    title_match=bool(r.get("title_match")),
                 )
                 for r in rows
             ]
@@ -288,6 +290,7 @@ class SearchOrchestrator:
                     channel_name=None,
                     uploaded_at=None,
                     duration_seconds=None,
+                    title_match=r.title_match,
                 )
                 for r in native_results
             ]
@@ -316,6 +319,7 @@ class SearchOrchestrator:
                     channel_name=r.get("channel_name"),
                     uploaded_at=r.get("uploaded_at"),
                     duration_seconds=r.get("duration_seconds"),
+                    title_match=bool(r.get("title_match")),
                 )
                 for r in rows
             ]
@@ -381,6 +385,7 @@ class SearchOrchestrator:
                     channel_name=None,
                     uploaded_at=None,
                     duration_seconds=None,
+                    title_match=bool(row.get("title_match")),
                 )
                 for row in rows
             ]
@@ -409,6 +414,7 @@ class SearchOrchestrator:
                     channel_name=None,
                     uploaded_at=None,
                     duration_seconds=None,
+                    title_match=row.title_match,
                 )
                 for row in results
             ]
@@ -437,6 +443,7 @@ class SearchOrchestrator:
                     channel_name=None,
                     uploaded_at=None,
                     duration_seconds=None,
+                    title_match=bool(row.get("title_match")),
                 )
                 for row in rows
             ]

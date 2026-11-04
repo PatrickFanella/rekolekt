@@ -240,6 +240,13 @@ class SearchHit(BaseModel):
     channel_name: Optional[str] = Field(None, description="Channel name for progressive archive UIs")
     uploaded_at: Optional[datetime] = Field(None, description="Video upload time")
     duration_seconds: Optional[int] = Field(None, description="Video duration in seconds")
+    title_match: bool = Field(
+        False,
+        description=(
+            "True when the query matched the video title rather than the transcript; "
+            "the snippet is then the title and the timestamp is the first transcript segment"
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_highlights_within_snippet(self) -> "SearchHit":
@@ -287,7 +294,13 @@ class ArchiveSummaryStats(BaseModel):
 
 
 class ArchiveSummary(BaseModel):
-    creator_name: str = Field("Transcript Archive", description="Archive display name")
+    creator_name: str = Field(
+        "Transcript Archive",
+        description=(
+            "Archive display name (the site name, kept under this field name for compatibility); "
+            "the creator's name is the site profile's creator_name"
+        ),
+    )
     video_count: int = Field(0, description="Count of archived videos with transcript coverage")
     total_duration_seconds: int = Field(0, description="Total duration across archived videos")
     transcript_word_count: int = Field(0, description="Estimated transcript word count")
