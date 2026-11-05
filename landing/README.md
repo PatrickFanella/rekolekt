@@ -53,6 +53,31 @@ mark changes.
 
 ## Deployment
 
+Gitea's `Main verification` workflow builds the landing image after the full
+backend verification job passes. Pull requests build without deployment
+credentials. Pushes to `main` and manual dispatches of `main` deploy that same
+image to the existing Almaz `rekolekt-landing` service. Backend images, workers,
+data and private-beta admission continue through their existing release paths.
+
+The image carries its full source revision and repository labels. CI streams it
+through an app-specific forced-command SSH key using `HOMELAB_DEPLOY_KEY` and
+the pinned host key in `HOMELAB_KNOWN_HOSTS`. The receiver is maintained in the
+private `subculture-collective/fleet-deploy` repository. Its host-side profile
+selects only this repository and the landing service. It refuses stale main
+revisions and wrong-app images, retains the existing Compose configuration,
+checks live image identity and public HTML, and restores the previous image on
+failed readiness. CI also compares the public HTML with the image it built.
+
+The homelab operator owns the deployment key; the initial rotation deadline is
+2027-02-03. Register and test the receiver/key before merging the pipeline.
+Private host receipts retain the receiver revision, key fingerprint, previous
+image IDs and exact rollback commands. Keep the referenced images and release
+files for recovery.
+
+For a deliberate manual recovery, inspect the latest receipt and subsequent host
+changes first, then use its recorded rollback command. The archived-image
+procedure below remains available to the operator.
+
 Build the `landing/` Docker context with a revision-specific image tag. Set
 `REKOLEKT_LANDING_IMAGE` in the deployment directory and run `docker compose -f
 compose.yml up -d`. The service joins the existing `projects` network. Import
