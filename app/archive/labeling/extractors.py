@@ -145,6 +145,7 @@ def extract_keyphrase_candidates(
 
 def extract_alias_candidates(windows: list[dict], aliases: list[dict]) -> list[LabelCandidate]:
     evidence_by_label: dict[str, list[dict]] = defaultdict(list)
+    matched_by_label: dict[str, set[str]] = defaultdict(set)
     label_rows, alias_terms_by_label = _usable_aliases(aliases)
 
     for window in windows:
@@ -158,6 +159,7 @@ def extract_alias_candidates(windows: list[dict], aliases: list[dict]) -> list[L
             matches = sorted(term for term in alias_terms_by_label[label_id] if alias_matches_text(term, lowered_text))
             if not matches:
                 continue
+            matched_by_label[label_id].update(matches)
             if len(evidence_by_label[label_id]) >= 10:
                 continue
             evidence_by_label[label_id].append(
@@ -178,11 +180,13 @@ def extract_alias_candidates(windows: list[dict], aliases: list[dict]) -> list[L
         alias_terms = tuple(sorted(alias_terms_by_label[label_id]))
         evidence_count = len(evidence)
         distinct_videos = len({item["video_id"] for item in evidence})
+        # Reward distinct aliases that matched, not how many aliases exist.
+        matched_aliases = len(matched_by_label[label_id])
         confidence = min(
             0.98,
             0.72
             + (0.05 * min(evidence_count, 5))
-            + (0.03 * min(len(alias_terms), 5))
+            + (0.03 * min(matched_aliases, 5))
             + (0.02 * min(distinct_videos, 5)),
         )
 
@@ -195,6 +199,7 @@ def extract_alias_candidates(windows: list[dict], aliases: list[dict]) -> list[L
                 component_scores={
                     "evidence_count": float(evidence_count),
                     "alias_count": float(len(alias_terms)),
+                    "matched_alias_count": float(matched_aliases),
                     "distinct_videos": float(distinct_videos),
                 },
                 evidence=tuple(evidence),

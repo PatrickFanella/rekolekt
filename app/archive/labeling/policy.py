@@ -8,10 +8,15 @@ def classify_candidate(candidate: dict, policy: dict, existing_canonical: bool) 
     evidence_count = int(candidate.get("evidence_count") or 0)
     distinct_videos = int(candidate.get("distinct_videos") or 0)
 
-    min_publish = float(policy.get("min_publish_score") or 0.90)
-    min_review = float(policy.get("min_review_score") or 0.65)
-    min_evidence = int(policy.get("min_evidence_count") or 1)
-    min_videos = int(policy.get("min_distinct_videos") or 1)
+    def setting(key: str, default: float) -> float:
+        # An explicit 0 is a valid threshold; only a missing value uses the default.
+        value = policy.get(key)
+        return default if value is None else float(value)
+
+    min_publish = setting("min_publish_score", 0.90)
+    min_review = setting("min_review_score", 0.65)
+    min_evidence = int(setting("min_evidence_count", 1))
+    min_videos = int(setting("min_distinct_videos", 1))
     require_existing = bool(policy.get("require_existing_canonical"))
     auto_publish = bool(policy.get("auto_publish_enabled", True))
 

@@ -360,3 +360,17 @@ def test_title_person_suggester_groups_examples():
     julie = next(item for item in suggestions if item["name"] == "Julie Gonzales")
     assert julie["count"] == 2
     assert julie["titles"][0]["video_id"] == "v1"
+
+
+def test_alias_confidence_counts_matched_aliases_not_all_aliases():
+    windows = [{"id": "w1", "video_id": "v1", "text": "Gaza and Ukraine were discussed", "start_ms": 0, "end_ms": 5000}]
+    aliases = [{"label_id": "topic-gaza", "label": "Gaza", "alias": "gaza", "kind": "topic", "status": "active"}]
+    aliases += [
+        {"label_id": "topic-ukraine", "label": "Ukraine", "alias": alias, "kind": "topic", "status": "active"}
+        for alias in ("ukraine", "kyiv", "zelensky", "donbas", "crimea")
+    ]
+
+    candidates = {candidate.label: candidate for candidate in extract_alias_candidates(windows, aliases)}
+
+    assert candidates["Gaza"].confidence_score == candidates["Ukraine"].confidence_score
+    assert candidates["Ukraine"].component_scores["matched_alias_count"] == 1.0
