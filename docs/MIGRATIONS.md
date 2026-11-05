@@ -6,6 +6,17 @@ Use additive Alembic migrations first. Verify the full history on an empty Postg
 
 Deploy additive schema, then compatible API/worker images, backfills, and finally deferred destructive cleanup in a later release. Historical billing columns remain dormant compatibility fields; they do not imply a billing contract.
 
+## Transcript block formatter version
+
+Stored `transcript_blocks` rows carry the `formatter_version` that built them (`FORMATTER_VERSION` in `app/transcripts/blocks.py`). The formatted transcript view ignores rows from another version and rebuilds blocks on every request, which is slow for long videos. After deploying an image that changes the version, refresh the stored rows from the worker image:
+
+```bash
+python scripts/backfill_transcript_blocks.py --dry-run --once --batch-size 20  # preview one batch
+python scripts/backfill_transcript_blocks.py --batch-size 100
+```
+
+The script selects videos with segments whose blocks are missing, built by another version, or older than a completed diarization run. Diarization updates speaker labels with a role that may not write `transcript_blocks`, so run the script after diarization batches as well. It walks the selected videos in id order and rebuilds each video in its own short transaction, so it can be stopped and rerun safely; finished videos no longer match. It reads the segments' current speaker labels.
+
 ## 20260813_multi_provider_ids: multiple identities per provider
 
 This migration removes the per-user/per-provider uniqueness constraint while retaining global uniqueness for each provider subject. Its downgrade is valid only before any user links a second identity from the same provider. The downgrade checks for such rows and fails closed before restoring the rc.8 constraint. Confirm the duplicate-provider query returns no rows before attempting an rc.8 rollback.

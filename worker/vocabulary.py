@@ -5,16 +5,18 @@ for domain-specific terms, proper nouns, acronyms, etc.
 """
 
 import re
+from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from app.logging_config import get_logger
+from app.settings import settings
 
 logger = get_logger(__name__)
 
 
-# Corrections that are specific to the HasanAbi archive and safe to apply to
-# every native transcript. Keep ambiguous terms inside their recurring phrase
-# so ordinary uses (for example, "MPs") retain their original meaning.
+# Corrections that are specific to the HasanAbi archive. They apply only when
+# ARCHIVE_EDITORIAL_PRESET is "hasanara". Keep ambiguous terms inside their
+# recurring phrase so ordinary uses (for example, "MPs") retain their meaning.
 ARCHIVE_VOCABULARY: Dict[str, Any] = {
     "terms": [
         {"pattern": r"pre[- ]new", "replacement": "pre-noon", "case_sensitive": False},
@@ -24,7 +26,7 @@ ARCHIVE_VOCABULARY: Dict[str, Any] = {
             "case_sensitive": False,
         },
         {
-            "pattern": r"thoughts and I(?:'m| am)",
+            "pattern": r"(?<=this )thoughts and I(?:'m| am)(?= broadcast)",
             "replacement": "is the HasanAbi",
             "case_sensitive": False,
         },
@@ -42,6 +44,24 @@ ARCHIVE_VOCABULARY: Dict[str, Any] = {
         {"pattern": r"Amela Keros", "replacement": "Melat Kiros", "case_sensitive": False},
     ]
 }
+
+_CURLY_APOSTROPHES = str.maketrans({"\u2019": "'", "\u2018": "'"})
+
+
+def builtin_vocabularies() -> List[Dict[str, Any]]:
+    """Return the built-in vocabularies enabled by the editorial preset."""
+    return [ARCHIVE_VOCABULARY] if settings.ARCHIVE_EDITORIAL_PRESET == "hasanara" else []
+
+
+@lru_cache(maxsize=2)
+def _builtin_processor(preset: str) -> Optional["VocabularyProcessor"]:
+    return VocabularyProcessor([ARCHIVE_VOCABULARY]) if preset == "hasanara" else None
+
+
+def apply_builtin_vocabulary(text: str) -> str:
+    """Apply the preset's built-in corrections to text (cheap enough per request)."""
+    processor = _builtin_processor(settings.ARCHIVE_EDITORIAL_PRESET)
+    return processor.process_text(text) if processor else text
 
 
 class VocabularyProcessor:
@@ -72,8 +92,9 @@ class VocabularyProcessor:
 
                 try:
                     flags = 0 if case_sensitive else re.IGNORECASE
-                    # Use word boundaries for whole-word matching
-                    compiled = re.compile(r"\b" + pattern + r"\b", flags)
+                    # Whole-word matching that also works for patterns starting or
+                    # ending in punctuation (for example "U.S.").
+                    compiled = re.compile(r"(?<!\w)(?:" + pattern + r")(?!\w)", flags)
                     self.patterns.append((compiled, replacement))
                 except re.error as e:
                     logger.warning(
@@ -93,9 +114,13 @@ class VocabularyProcessor:
         if not text:
             return text
 
-        result = text
+        if not self.patterns:
+            return text
+
+        result = text.translate(_CURLY_APOSTROPHES)
         for pattern, replacement in self.patterns:
-            result = pattern.sub(replacement, result)
+            # Replacements are literal text, so backslashes cannot raise re.error.
+            result = pattern.sub(lambda _match, value=replacement: value, result)
 
         return result
 
@@ -181,5 +206,5 @@ def apply_vocabulary_corrections(
         Corrected segments
     """
     vocabularies = load_vocabularies(conn, user_id, vocabulary_ids)
-    processor = VocabularyProcessor([ARCHIVE_VOCABULARY, *vocabularies])
+    processor = VocabularyProcessor([*builtin_vocabularies(), *vocabularies])
     return processor.process_segments(segments)

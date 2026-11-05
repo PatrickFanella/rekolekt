@@ -8,7 +8,7 @@ from worker.formatter import TranscriptFormatter
 
 from .types import TranscriptSegment
 
-FORMATTER_VERSION = "rule-v4"
+FORMATTER_VERSION = "rule-v5"
 
 
 @dataclass(frozen=True)
@@ -23,7 +23,7 @@ class TranscriptBlock:
     formatter_version: str = FORMATTER_VERSION
 
 
-def _formatter() -> TranscriptFormatter:
+def _formatter(whisper_silence_phrases: bool) -> TranscriptFormatter:
     return TranscriptFormatter(
         config={
             "enabled": True,
@@ -38,6 +38,7 @@ def _formatter() -> TranscriptFormatter:
             "capitalize_sentences": False,
             "fix_all_caps": True,
             "detect_hallucinations": True,
+            "whisper_silence_phrases": whisper_silence_phrases,
             "segment_by_sentences": False,
             "merge_short_segments": False,
             "speaker_format": "inline",
@@ -46,8 +47,8 @@ def _formatter() -> TranscriptFormatter:
     )
 
 
-def _clean_segments(segments: Sequence[TranscriptSegment]) -> list[dict]:
-    formatted = _formatter().format_segments(
+def _clean_segments(segments: Sequence[TranscriptSegment], whisper_silence_phrases: bool) -> list[dict]:
+    formatted = _formatter(whisper_silence_phrases).format_segments(
         [
             {
                 "start": segment.start_ms,
@@ -136,8 +137,15 @@ def _punctuate_block_text(text: str) -> str:
     return _capitalize_sentence_starts(text)
 
 
-def build_transcript_blocks(segments: Sequence[TranscriptSegment]) -> list[TranscriptBlock]:
-    cleaned_segments = _clean_segments(segments)
+def build_transcript_blocks(
+    segments: Sequence[TranscriptSegment], *, whisper_silence_phrases: bool = True
+) -> list[TranscriptBlock]:
+    """Build paragraph/speaker blocks.
+
+    Pass whisper_silence_phrases=False for human-made captions, where phrases
+    such as "Thank you." are real speech rather than Whisper silence artifacts.
+    """
+    cleaned_segments = _clean_segments(segments, whisper_silence_phrases)
     blocks: list[TranscriptBlock] = []
     current: list[dict] = []
     current_speaker: str | None = None

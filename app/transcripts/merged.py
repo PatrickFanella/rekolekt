@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 from app.transcripts.blocks import build_transcript_blocks
 from app.transcripts.types import TranscriptSegment
+from app.transcripts.youtube_formatting import correct_caption_text
 
 _TOKEN_RE = re.compile(r"[\w']+")
 
@@ -66,6 +67,18 @@ def bucket_by_time(segments: Sequence[TranscriptSegment], bucket_ms: int) -> dic
     return dict(sorted(buckets.items()))
 
 
+def covered_buckets(segments: Sequence[TranscriptSegment], bucket_ms: int) -> set[int]:
+    """Return every time window that a segment with text overlaps."""
+    covered: set[int] = set()
+    for segment in segments:
+        if not segment.text.strip():
+            continue
+        first = max(0, int(segment.start_ms) // bucket_ms)
+        last = max(first, (int(segment.end_ms) - 1) // bucket_ms)
+        covered.update(range(first, last + 1))
+    return covered
+
+
 def _join_segments(segments: Sequence[TranscriptSegment]) -> tuple[int, int, str, str | None]:
     ordered = sorted(segments, key=lambda s: (s.start_ms, s.end_ms))
     start_ms = ordered[0].start_ms
@@ -81,7 +94,11 @@ def build_merged_transcript(
     youtube_segments: Sequence[TranscriptSegment],
     bucket_ms: int = 10000,
 ) -> MergedTranscript:
+    youtube_segments = [
+        TranscriptSegment(s.start_ms, s.end_ms, correct_caption_text(s.text), s.speaker_label) for s in youtube_segments
+    ]
     whisper_buckets = bucket_by_time(whisper_segments, bucket_ms)
+    whisper_covered = covered_buckets(whisper_segments, bucket_ms)
     youtube_buckets = bucket_by_time(youtube_segments, bucket_ms)
     all_buckets = sorted(set(whisper_buckets) | set(youtube_buckets))
 
@@ -97,6 +114,9 @@ def build_merged_transcript(
             segment_meta.append(("whisper", [], False, None, None))
             continue
         if youtube_bucket and not whisper_bucket:
+            if bucket in whisper_covered:
+                # A Whisper segment that started earlier already spans this window.
+                continue
             start_ms, end_ms, text, speaker_label = _join_segments(youtube_bucket)
             chosen.append(TranscriptSegment(start_ms=start_ms, end_ms=end_ms, text=text, speaker_label=speaker_label))
             segment_meta.append(("youtube", [], False, None, None))

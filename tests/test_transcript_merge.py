@@ -60,3 +60,35 @@ def test_merge_prefers_whisper_and_flags_heavy_disagreement():
     assert result.blocks[0].primary_source == "whisper"
     assert result.blocks[0].needs_review is True
     assert result.blocks[0].merge_reason == "heavy_disagreement_prefer_whisper"
+
+
+def test_merge_skips_youtube_text_inside_a_long_whisper_segment():
+    result = build_merged_transcript(
+        video_id="video-1",
+        whisper_segments=[seg(0, 25000, "a long whisper segment spanning three windows")],
+        youtube_segments=[
+            seg(0, 5000, "a long whisper"),
+            seg(12000, 15000, "segment spanning"),
+            seg(21000, 24000, "three windows"),
+            seg(30000, 32000, "after the whisper speech"),
+        ],
+        bucket_ms=10000,
+    )
+
+    assert [s.text for s in result.segments] == [
+        "a long whisper segment spanning three windows",
+        "after the whisper speech",
+    ]
+
+
+def test_merge_corrects_youtube_only_caption_text(monkeypatch):
+    monkeypatch.setattr("worker.vocabulary.settings.ARCHIVE_EDITORIAL_PRESET", "hasanara")
+
+    result = build_merged_transcript(
+        video_id="video-1",
+        whisper_segments=[seg(0, 5000, "hello from whisper")],
+        youtube_segments=[seg(20000, 25000, "i think Oliver Largan is right")],
+        bucket_ms=5000,
+    )
+
+    assert result.segments[1].text == "I think Oliver Larkin is right"

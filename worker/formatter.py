@@ -16,33 +16,61 @@ logger = get_logger(__name__)
 
 # Common filler words by aggressiveness level
 FILLER_WORDS = {
-    1: {"um", "uh", "er", "ah", "hmm", "mhm"},  # Conservative
-    2: {"like", "you know", "i mean", "so", "basically", "literally"},  # Moderate
+    1: {"um", "uh", "er", "hmm", "mhm"},  # Conservative: pure hesitation sounds
+    2: {"ah", "like", "you know", "i mean", "so", "basically", "literally"},  # Moderate
     3: {"kind of", "sort of", "you see", "right", "okay", "well"},  # Aggressive
 }
 
-# Sound event tokens to remove
-SOUND_EVENT_TOKENS = [
-    "[MUSIC]",
-    "[APPLAUSE]",
-    "[LAUGHTER]",
-    "[NOISE]",
-    "[INAUDIBLE]",
-    "[BLANK_AUDIO]",
-    "♪",
-    "♫",
-]
+# Sound event tags to remove: Whisper's [MUSIC], YouTube's [Music]/[Applause],
+# sung passages wrapped in ♪…♪ and stray note symbols.
+SOUND_EVENT_RE = re.compile(
+    r"\[\s*(?:music|applause|laughter|noise|inaudible|blank_audio)\s*\]|♪[^♪]*♪|[♪♫]",
+    re.IGNORECASE,
+)
 
-# Hallucination patterns (common Whisper artifacts)
+# Hallucination patterns (common Whisper artifacts), matched against the whole segment
 HALLUCINATION_PATTERNS = [
-    r"^(\w+)\s+\1\s+\1\s+\1",  # Repeated word patterns (word repeated 4+ times)
+    r"^(\w+)(?:\s+\1){3,}[\s\.\,\!\?]*$",  # Only one word repeated 4+ times
     r"^\s*[\.\,\!\?]+\s*$",  # Only punctuation
     r"^You\.?$",  # Common Whisper silence hallucination
-    r"^Thank you\.$",  # Common hallucination
+]
+
+# Phrases Whisper invents over silence. They are also real speech, so callers
+# formatting human-made captions can disable them with whisper_silence_phrases.
+WHISPER_SILENCE_PATTERNS = [
+    r"^Thank you\.$",
     r"^Thanks for watching\.$",
 ]
 
-KNOWN_ACRONYMS = {"CIA", "EU", "FBI", "ICE", "NASA", "NATO", "UK", "UN", "USA"}
+KNOWN_ACRONYMS = {
+    "ACLU",
+    "AOC",
+    "CDC",
+    "CIA",
+    "CNN",
+    "DNC",
+    "DOJ",
+    "EU",
+    "FBI",
+    "FDA",
+    "GOP",
+    "ICE",
+    "IDF",
+    "IRS",
+    "MAGA",
+    "MSNBC",
+    "NASA",
+    "NATO",
+    "NBC",
+    "NPR",
+    "NYPD",
+    "RNC",
+    "UAW",
+    "UK",
+    "UN",
+    "US",
+    "USA",
+}
 
 
 def _is_repetitive_gibberish(text: str) -> bool:
@@ -124,6 +152,7 @@ class TranscriptFormatter:
             "speaker_format": settings.CLEANUP_SPEAKER_FORMAT,
             # Advanced
             "detect_hallucinations": settings.CLEANUP_DETECT_HALLUCINATIONS,
+            "whisper_silence_phrases": True,
             "language_specific_rules": settings.CLEANUP_LANGUAGE_SPECIFIC_RULES,
         }
 
@@ -219,21 +248,23 @@ class TranscriptFormatter:
         if self.config["preserve_sound_events"]:
             return text
 
-        for token in SOUND_EVENT_TOKENS:
-            text = text.replace(token, "")
-
-        return text.strip()
+        text = SOUND_EVENT_RE.sub("", text)
+        return re.sub(r" {2,}", " ", text).strip()
 
     def _is_hallucination(self, text: str) -> bool:
         """Detect if text is likely a Whisper hallucination."""
         text = text.strip()
 
-        # Empty or too short
-        if len(text) < 3:
+        # Empty, a single character, or no spoken words at all. Short speech
+        # such as "ok" or "no" is kept.
+        if len(text) < 2 or not re.search(r"\w", text):
             return True
 
         # Match known patterns
-        for pattern in HALLUCINATION_PATTERNS:
+        patterns = list(HALLUCINATION_PATTERNS)
+        if self.config.get("whisper_silence_phrases", True):
+            patterns += WHISPER_SILENCE_PATTERNS
+        for pattern in patterns:
             if re.match(pattern, text, re.IGNORECASE):
                 return True
 
@@ -253,12 +284,25 @@ class TranscriptFormatter:
         for i in range(1, min(level + 1, 4)):
             fillers_to_remove.update(FILLER_WORDS.get(i, set()))
 
-        # Build pattern for word boundaries
-        pattern = r"\b(" + "|".join(re.escape(f) for f in fillers_to_remove) + r")\b"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
+        # Remove each filler together with its surrounding commas. When the
+        # filler sat between two commas ("So, um, I"), keep one of them.
+        alternatives = "|".join(re.escape(f) for f in sorted(fillers_to_remove, key=len, reverse=True))
+        pattern = r"(,\s*)?\b(?:" + alternatives + r")\b(\s*,)?"
+        text, removed = re.subn(
+            pattern,
+            lambda m: ", " if m.group(1) and m.group(2) else "",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not removed:
+            return text
 
-        # Clean up extra spaces
+        # Tidy what the removal left behind
         text = re.sub(r" {2,}", " ", text)
+        text = re.sub(r"\s+([,.!?;:])", r"\1", text)
+        text = re.sub(r",(?:\s*,)+", ",", text)
+        text = re.sub(r",([.!?])", r"\1", text)
+        text = re.sub(r"^[\s,]+", "", text)
         return text.strip()
 
     def _fix_all_caps(self, text: str) -> str:
@@ -348,6 +392,7 @@ class TranscriptFormatter:
             current_start = seg["start"]
 
             # Reconstruct sentences and create segments
+            first_piece = len(result)
             i = 0
             while i < len(sentences):
                 sentence = sentences[i]
@@ -375,6 +420,10 @@ class TranscriptFormatter:
                 result.append(new_seg)
 
                 current_start = segment_end
+
+            # Rounding must not cut the final sentence short of the segment end
+            if len(result) > first_piece:
+                result[-1]["end"] = seg["end"]
 
         return result
 
