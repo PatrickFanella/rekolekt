@@ -837,3 +837,119 @@ def test_single_chapter_window_is_valid():
         ],
     )
     assert len(candidate.chapters) == 1
+
+
+def _parse_chapters(monkeypatch, chapters, episode=None):
+    payload = _response_payload()
+    parsed = json.loads(payload["choices"][0]["message"]["content"])
+    parsed["chapters"] = chapters
+    payload["choices"][0]["message"]["content"] = json.dumps(parsed)
+    monkeypatch.setattr("app.archive.openrouter_enrichment.request.urlopen", lambda _req, timeout: _Response(payload))
+    return generate_openrouter_episode_enrichment(episode or _episode(), api_key="key", model="model", max_retries=0)
+
+
+def _chapter(start_ms, title, evidence):
+    return {
+        "start_ms": start_ms,
+        "title": title,
+        "summary": "A sustained discussion.",
+        "evidence_block_indexes": evidence,
+    }
+
+
+def test_chapter_start_snaps_to_the_cited_block_containing_it(monkeypatch):
+    result = _parse_chapters(
+        monkeypatch, [_chapter(0, "Labor organizing", [0]), _chapter(650_000, "Housing costs", [1])]
+    )
+    assert [chapter.start_ms for chapter in result.candidate.chapters] == [0, 600_000]
+    assert result.chapter_boundaries_realigned == 1
+    assert result.evidence_overlap_violations == 0
+
+
+@pytest.mark.parametrize(
+    "chapters,expected_starts,expected_titles",
+    [
+        ([(0, [0]), (600_000, [1]), (610_000, [1])], [0, 610_000], ["Chapter 0", "Chapter 2"]),
+        ([(0, [0]), (20_000, [0])], [0], ["Chapter 1"]),
+        ([(0, [0]), (1_190_000, [2])], [0], ["Chapter 0"]),
+    ],
+)
+def test_chapters_shorter_than_thirty_seconds_merge_into_a_neighbour(
+    monkeypatch, chapters, expected_starts, expected_titles
+):
+    episode = _episode().model_copy(
+        update={
+            "blocks": [
+                TranscriptBlockInput(block_index=0, start_ms=0, end_ms=600_000, text="Labor discussion."),
+                TranscriptBlockInput(block_index=1, start_ms=600_000, end_ms=1_190_000, text="Housing discussion."),
+                TranscriptBlockInput(block_index=2, start_ms=1_190_000, end_ms=1_200_000, text="Goodbye."),
+            ]
+        }
+    )
+    payload = [_chapter(start, f"Chapter {index}", evidence) for index, (start, evidence) in enumerate(chapters)]
+    result = _parse_chapters(monkeypatch, payload, episode)
+    assert [chapter.start_ms for chapter in result.candidate.chapters] == expected_starts
+    assert [chapter.title for chapter in result.candidate.chapters] == expected_titles
+    assert result.short_chapters_merged == len(chapters) - len(expected_starts)
+    assert result.as_dict()["normalizations"]["short_chapters_merged"] == result.short_chapters_merged
+    assert result.evidence_overlap_violations == 0
+
+
+def _windowed_episode(minutes=100):
+    return EpisodeInput(
+        video_id="windowed",
+        duration_ms=minutes * 60_000,
+        blocks=[
+            TranscriptBlockInput(
+                block_index=index,
+                start_ms=index * 60_000,
+                end_ms=(index + 1) * 60_000,
+                text=f"Discussion block {index}.",
+            )
+            for index in range(minutes)
+        ],
+    )
+
+
+def _window_generator(chapters_for_window):
+    calls = []
+
+    def generate_window(window: EpisodeInput) -> OpenRouterEpisodeResult:
+        calls.append(window)
+        chapters = [
+            {
+                "start_ms": start,
+                "title": title,
+                "summary": "A sustained discussion in this window.",
+                "evidence_block_indexes": [next(b.block_index for b in window.blocks if b.end_ms > start)],
+            }
+            for start, title in chapters_for_window(len(calls) - 1, window)
+        ]
+        return OpenRouterEpisodeResult(
+            video_id=window.video_id,
+            model="model",
+            provider="provider",
+            prompt_version="prompt-v1",
+            candidate=EpisodeEnrichmentCandidate(
+                subjects=["Topic"], keywords=["topic"], categories=[], chapters=chapters
+            ),
+            prompt_tokens=1,
+            completion_tokens=1,
+            cost_usd=0.001,
+            elapsed_seconds=0.1,
+        )
+
+    return generate_window
+
+
+def test_hierarchical_merge_folds_short_chapters_after_concatenation():
+    def chapters(index, window):
+        if index == 0:
+            return [(0, "Opening discussion"), (window.duration_ms - 10_000, "Brief aside")]
+        return [(0, "Second window topic"), (window.duration_ms // 2, "Later topic")]
+
+    result = generate_hierarchical_openrouter_enrichment(
+        _windowed_episode(), generate_window=_window_generator(chapters), max_window_ms=90 * 60_000
+    )
+    assert [chapter.start_ms for chapter in result.candidate.chapters] == [0, 3_000_000, 4_500_000]
+    assert result.short_chapters_merged == 1

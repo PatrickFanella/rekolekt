@@ -246,6 +246,7 @@ class OpenRouterEpisodeResult(BaseModel):
     categories_dropped: int = 0
     category_rejections: list[dict[str, str]] = Field(default_factory=list)
     evidence_overlap_violations: int = 0
+    short_chapters_merged: int = 0
     window_count: int = 1
 
     def prediction(self, duration_ms: int) -> EpisodePrediction:
@@ -285,6 +286,7 @@ class OpenRouterEpisodeResult(BaseModel):
                 "chapter_boundaries_realigned": self.chapter_boundaries_realigned,
                 "categories_dropped": self.categories_dropped,
                 "category_rejections": self.category_rejections,
+                "short_chapters_merged": self.short_chapters_merged,
             },
             "validation": {"evidence_overlap_violations": self.evidence_overlap_violations},
             "window_count": self.window_count,
@@ -444,6 +446,64 @@ def _deduplicate_and_limit_labels(values: Any, limit: int, max_length: int) -> t
     return retained, len(values) - len(retained)
 
 
+MIN_CHAPTER_MS = 30_000
+
+
+def _cites_overlap(
+    chapter: EpisodeChapterCandidate, start_ms: int, end_ms: int, block_by_index: dict[int, TranscriptBlockInput]
+) -> bool:
+    return any(
+        block_by_index[index].end_ms > start_ms and block_by_index[index].start_ms < end_ms
+        for index in chapter.evidence_block_indexes
+        if index in block_by_index
+    )
+
+
+def _overlap_violations(
+    chapters: list[EpisodeChapterCandidate], duration_ms: int, block_by_index: dict[int, TranscriptBlockInput]
+) -> int:
+    return sum(
+        not _cites_overlap(
+            chapter,
+            chapter.start_ms,
+            chapters[index + 1].start_ms if index + 1 < len(chapters) else duration_ms,
+            block_by_index,
+        )
+        for index, chapter in enumerate(chapters)
+    )
+
+
+def _absorb(kept: EpisodeChapterCandidate, other: EpisodeChapterCandidate, **update: Any) -> EpisodeChapterCandidate:
+    evidence = list(dict.fromkeys([*kept.evidence_block_indexes, *other.evidence_block_indexes]))[:3]
+    return kept.model_copy(update={"evidence_block_indexes": evidence, **update})
+
+
+def _merge_short_chapters(
+    chapters: list[EpisodeChapterCandidate], duration_ms: int
+) -> tuple[list[EpisodeChapterCandidate], int]:
+    """Fold chapters shorter than the publish minimum into a neighbour.
+
+    Chapter review refuses chapters under 30 seconds at publication. A short
+    opening joins the next chapter, which then starts at zero; any other
+    short chapter joins the previous one.
+    """
+    merged = list(chapters)
+    count = 0
+    index = 0
+    while len(merged) > 1 and index < len(merged):
+        end_ms = merged[index + 1].start_ms if index + 1 < len(merged) else duration_ms
+        if end_ms - merged[index].start_ms >= MIN_CHAPTER_MS:
+            index += 1
+            continue
+        if index == 0:
+            merged[0:2] = [_absorb(merged[1], merged[0], start_ms=0)]
+        else:
+            merged[index - 1 : index + 1] = [_absorb(merged[index - 1], merged[index])]
+            index -= 1
+        count += 1
+    return merged, count
+
+
 def _parse_response(
     payload: dict[str, Any],
     episode: EpisodeInput,
@@ -581,7 +641,6 @@ def _parse_response(
     for category in candidate.categories:
         if any(block_index not in block_by_index for block_index in category.evidence_block_indexes):
             raise invalid("category cites an unknown transcript block")
-    evidence_overlap_violations = 0
     chapter_boundaries_realigned = 0
     for index, chapter in enumerate(candidate.chapters):
         end_ms = candidate.chapters[index + 1].start_ms if index + 1 < len(candidate.chapters) else episode.duration_ms
@@ -589,10 +648,25 @@ def _parse_response(
             raise invalid("chapter starts outside the episode")
         if any(block_index not in block_by_index for block_index in chapter.evidence_block_indexes):
             raise invalid("chapter cites an unknown transcript block")
-        overlaps = any(
-            block_by_index[block_index].end_ms > chapter.start_ms and block_by_index[block_index].start_ms < end_ms
-            for block_index in chapter.evidence_block_indexes
-        )
+        if index > 0:
+            # Snap a start that falls inside a cited block back to that
+            # block's start, if the previous chapter keeps its own evidence.
+            previous = candidate.chapters[index - 1]
+            containing = [
+                block_by_index[block_index].start_ms
+                for block_index in chapter.evidence_block_indexes
+                if block_by_index[block_index].start_ms < chapter.start_ms < block_by_index[block_index].end_ms
+            ]
+            snapped = max(containing, default=chapter.start_ms)
+            if (
+                snapped != chapter.start_ms
+                and snapped > previous.start_ms
+                and _cites_overlap(previous, previous.start_ms, snapped, block_by_index)
+            ):
+                chapter = chapter.model_copy(update={"start_ms": snapped})
+                candidate.chapters[index] = chapter
+                chapter_boundaries_realigned += 1
+        overlaps = _cites_overlap(chapter, chapter.start_ms, end_ms, block_by_index)
         if not overlaps and index > 0 and len(chapter.evidence_block_indexes) == 1:
             cited = block_by_index[chapter.evidence_block_indexes[0]]
             previous = candidate.chapters[index - 1]
@@ -603,17 +677,13 @@ def _parse_response(
             if (
                 cited.end_ms == chapter.start_ms
                 and previous.start_ms < cited.start_ms < chapter.start_ms
-                and any(
-                    block_by_index[block_index].end_ms > previous.start_ms
-                    and block_by_index[block_index].start_ms < cited.start_ms
-                    for block_index in previous.evidence_block_indexes
-                )
+                and _cites_overlap(previous, previous.start_ms, cited.start_ms, block_by_index)
             ):
                 candidate.chapters[index] = chapter.model_copy(update={"start_ms": cited.start_ms})
                 chapter_boundaries_realigned += 1
-                overlaps = True
-        if not overlaps:
-            evidence_overlap_violations += 1
+    chapters, short_chapters_merged = _merge_short_chapters(candidate.chapters, episode.duration_ms)
+    candidate = candidate.model_copy(update={"chapters": chapters})
+    evidence_overlap_violations = _overlap_violations(chapters, episode.duration_ms, block_by_index)
 
     return OpenRouterEpisodeResult(
         video_id=episode.video_id,
@@ -635,6 +705,7 @@ def _parse_response(
         category_rejections=category_rejections,
         evidence_overlap_violations=evidence_overlap_violations,
         chapter_boundaries_realigned=chapter_boundaries_realigned,
+        short_chapters_merged=short_chapters_merged,
     )
 
 
@@ -891,6 +962,7 @@ def generate_hierarchical_openrouter_enrichment(
             chapter.model_copy(update={"start_ms": offset_ms + chapter.start_ms})
             for chapter in result.candidate.chapters
         )
+    chapters, short_chapters_merged = _merge_short_chapters(chapters, episode.duration_ms)
     category_counts: Counter[str] = Counter()
     category_evidence: dict[str, list[int]] = {}
     for _offset_ms, result in window_results:
@@ -947,6 +1019,8 @@ def generate_hierarchical_openrouter_enrichment(
         category_rejections=category_rejections,
         evidence_overlap_violations=sum(result.evidence_overlap_violations for _offset, result in window_results),
         chapter_boundaries_realigned=sum(result.chapter_boundaries_realigned for _offset, result in window_results),
+        short_chapters_merged=short_chapters_merged
+        + sum(result.short_chapters_merged for _offset, result in window_results),
         window_count=len(window_results),
     )
 

@@ -519,6 +519,7 @@ def enrich_video_candidates(
                     "chapter_boundaries_reordered": result.chapter_boundaries_reordered,
                     "chapter_boundaries_deduplicated": result.chapter_boundaries_deduplicated,
                     "chapter_boundaries_realigned": result.chapter_boundaries_realigned,
+                    "short_chapters_merged": result.short_chapters_merged,
                     "categories_dropped": result.categories_dropped,
                     "category_rejections": result.category_rejections,
                     "evidence_overlap_violations": result.evidence_overlap_violations,
