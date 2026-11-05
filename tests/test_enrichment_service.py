@@ -397,7 +397,6 @@ def test_enrich_video_generates_v4_pro_candidates_and_records_run(monkeypatch, a
     [
         (0, "per-video limit"),
         (1, "does not overlap"),
-        (0, "no sustained categories"),
         (0, "incomplete chapter coverage"),
         (0, "unsupported chapter evidence"),
     ],
@@ -448,8 +447,6 @@ def test_enrich_video_rejects_invalid_results_before_persistence(overlap_violati
     finished = []
     persisted = []
     result = result.model_copy(update={"evidence_overlap_violations": overlap_violations})
-    if error_message == "no sustained categories":
-        result = result.model_copy(update={"candidate": result.candidate.model_copy(update={"categories": []})})
     if error_message == "incomplete chapter coverage":
         result = result.model_copy(update={"window_count": 2})
     if error_message == "unsupported chapter evidence":
@@ -653,3 +650,22 @@ def test_coverage_gate_accepts_contiguous_chapters_without_a_seam_start():
     )
     result = result.model_copy(update={"window_count": 2, "candidate": candidate})
     validate_generated_candidates(episode, result, SimpleNamespace(ARCHIVE_ENRICHMENT_MAX_WINDOW_MINUTES=90))
+
+
+def test_generation_gate_accepts_a_run_without_categories():
+    from app.archive.enrichment_service import validate_generated_candidates
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_200_000,
+        blocks=[{"block_index": 0, "start_ms": 0, "end_ms": 1_200_000, "text": "A long chat about cooking."}],
+    )
+    chapters = [
+        {
+            "start_ms": 0,
+            "title": "Cooking discussion",
+            "summary": "A long chat about cooking.",
+            "evidence_block_indexes": [0],
+        }
+    ]
+    validate_generated_candidates(episode, _grounding_result(episode, chapters), SimpleNamespace())

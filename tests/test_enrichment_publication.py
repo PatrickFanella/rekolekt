@@ -170,6 +170,32 @@ def test_approval_preserves_hidden_topic_assignments(cohort):
     )
 
 
+@pytest.mark.parametrize("topic", [False, True])
+def test_approval_accepts_a_run_without_categories(cohort, topic):
+    db, make = cohort
+    ids = make()
+    if topic:
+        db.execute(
+            text(
+                """UPDATE archive_label_assignments SET evidence=jsonb_build_array(jsonb_build_object('extractor','llm')),
+                component_scores=jsonb_build_object('llm_grounded',1.0) WHERE id=:assignment"""
+            ),
+            ids,
+        )
+        metrics = {"assignments": 1, "categories": 0}
+    else:
+        db.execute(text("DELETE FROM archive_label_assignments WHERE id=:assignment"), ids)
+        metrics = {"assignments": 0, "categories": 0}
+    db.execute(
+        text("UPDATE archive_extraction_runs SET metrics=metrics || CAST(:metrics AS jsonb) WHERE id=:run"),
+        {**ids, "metrics": json.dumps(metrics)},
+    )
+    result = approve_run(db, ids["run"])
+    assert result["status"] == "approved"
+    assert result["chapters"] == 2
+    assert result["assignments"] == int(topic)
+
+
 def test_approval_leaves_quality_review_labels_unapproved(cohort):
     db, make = cohort
     ids = make()

@@ -51,8 +51,8 @@ def validate_generated_candidates(episode: EpisodeInput, result: OpenRouterEpiso
     """Acceptance is a transaction gate, not an optional wrapper audit."""
     if result.evidence_overlap_violations:
         raise RuntimeError("archive enrichment chapter evidence does not overlap its chapter")
-    if not result.candidate.categories:
-        raise RuntimeError("archive enrichment quality gate: no sustained categories")
+    # Zero categories is valid: the prompt asks for an empty list when no
+    # controlled category fits, and the taxonomy has no catch-all.
     chapters = result.candidate.chapters
     starts = [chapter.start_ms for chapter in chapters]
     windows = max(
@@ -116,10 +116,8 @@ def validate_stored_candidates(db: Any, video_id: str, run_id: str, metrics: dic
         .mappings()
         .one()
     )
-    if (
-        not stored["review_only"]
-        or not stored["categories"]
-        or any(stored[key] != metrics[key] for key in ("chapters", "assignments", "labels", "categories"))
+    if not stored["review_only"] or any(
+        stored[key] != metrics[key] for key in ("chapters", "assignments", "labels", "categories")
     ):
         raise RuntimeError("archive enrichment quality gate: stored candidates do not match generation metrics")
 

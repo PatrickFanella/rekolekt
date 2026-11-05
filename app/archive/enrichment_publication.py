@@ -67,11 +67,10 @@ def approve_run(db: Any, run_id: str) -> dict[str, Any]:
     metrics = run["metrics"] or {}
     if (
         not chapters
-        or not assignments
         or metrics.get("repairs", {}).get("evidence_overlap_violations") != 0
         or len(chapters) != metrics.get("chapters")
         or len(assignments) != metrics.get("assignments")
-        or not metrics.get("categories")
+        or not isinstance(metrics.get("categories"), int)
         or any(
             str(c["run_id"]) != run_id
             or c["status"] != "candidate"
@@ -92,16 +91,23 @@ def approve_run(db: Any, run_id: str) -> dict[str, Any]:
         {"video": video_id},
     ).scalar():
         raise ValueError("Approval refuses prior editorial chapter feedback")
-    if db.execute(
-        text("SELECT 1 FROM archive_label_feedback WHERE assignment_id=ANY(:ids) LIMIT 1"),
-        {"ids": [a["id"] for a in assignments]},
-    ).scalar():
+    if (
+        assignments
+        and db.execute(
+            text("SELECT 1 FROM archive_label_feedback WHERE assignment_id=ANY(:ids) LIMIT 1"),
+            {"ids": [a["id"] for a in assignments]},
+        ).scalar()
+    ):
         raise ValueError("Approval refuses prior assignment feedback")
-    labels = list(
-        db.execute(
-            text("SELECT * FROM archive_labels WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
-            {"ids": list({a["label_id"] for a in assignments})},
-        ).mappings()
+    labels = (
+        list(
+            db.execute(
+                text("SELECT * FROM archive_labels WHERE id=ANY(:ids) ORDER BY id FOR UPDATE"),
+                {"ids": list({a["label_id"] for a in assignments})},
+            ).mappings()
+        )
+        if assignments
+        else []
     )
     if any(
         label["status"] not in {"candidate", "published", "hidden"} or label["canonical_id"] is not None
@@ -131,7 +137,8 @@ def approve_run(db: Any, run_id: str) -> dict[str, Any]:
     ]
     if len(category_assignments) != metrics["categories"]:
         raise ValueError("Stored category provenance does not match run metrics")
-    if not any(a["label_id"] not in hidden_ids for a in category_assignments):
+    # A run may have no categories, but categories it does have must not all be hidden.
+    if category_assignments and not any(a["label_id"] not in hidden_ids for a in category_assignments):
         raise ValueError("Approval requires a non-hidden sustained category")
     # Never publish a shared candidate label if that would expose unrelated
     # already-visible assignments without explicit approval for those rows.
