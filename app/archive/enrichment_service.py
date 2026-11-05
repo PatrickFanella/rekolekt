@@ -356,12 +356,15 @@ def persist_enrichment_candidates(
             # Use the repository's slug normalization, not display-string equality.
             metrics["skipped_duplicate_labels"] += 1
             continue
-        # The same quality policy as deterministic labels: drop noise, and keep
-        # "review" values as candidates that automatic approval leaves alone.
+        # Drop noise. Hold a "review" value for an editor only when the policy
+        # found a junk or low-information signal; a review caused by the base
+        # score or a canonical-name hint alone is kept, since grounding is the
+        # accuracy gate for model labels.
         quality = assess_label_quality(label, source="llm")
         if quality.action == "mark_noise":
             metrics["skipped_low_quality_labels"] += 1
             continue
+        held = quality.action == "review" and bool(set(quality.reasons) - {"canonical_hint_available"})
         evidence = _grounded_label_evidence(label, episode, result)
         if not evidence:
             metrics["skipped_ungrounded_labels"] += 1
@@ -382,11 +385,11 @@ def persist_enrichment_candidates(
             evidence=evidence,
             source="llm",
             run_id=run_id,
-            component_scores={"llm_grounded": 1.0, **({"quality_review": 1.0} if quality.action == "review" else {})},
+            component_scores={"llm_grounded": 1.0, **({"quality_review": 1.0} if held else {})},
         )
         metrics["labels"] += 1
         metrics["assignments"] += 1
-        metrics["held_for_review_labels"] += quality.action == "review"
+        metrics["held_for_review_labels"] += held
         assigned_ids.add(label_id)
         assigned_slugs.add(slug)
     return metrics

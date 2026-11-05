@@ -282,7 +282,7 @@ def test_persist_enrichment_writes_review_candidates_with_grounded_labels():
         "skipped_duplicate_labels": 0,
         "skipped_refused_labels": 0,
         "skipped_low_quality_labels": 0,
-        "held_for_review_labels": 4,
+        "held_for_review_labels": 0,
     }
 
 
@@ -493,23 +493,14 @@ def test_enrich_video_rejects_invalid_results_before_persistence(overlap_violati
     assert [call[0] for call in db.calls].count("COMMIT") == 2
 
 
-def test_persist_enrichment_drops_noise_labels_and_holds_review_labels():
+def test_persist_enrichment_publishes_grounded_topics_drops_noise_and_holds_junk_signals():
+    text_value = "Chat, the stream: Donald Trump on the Gaza ceasefire, then labor organizing and the union vote."
     episode = EpisodeInput(
         video_id="video-1",
         duration_ms=1_200_000,
         blocks=[
-            {
-                "block_index": 0,
-                "start_ms": 0,
-                "end_ms": 600_000,
-                "text": "Chat, the stream: Zohran Mamdani and the union vote.",
-            },
-            {
-                "block_index": 1,
-                "start_ms": 600_000,
-                "end_ms": 1_200_000,
-                "text": "Chat and the stream: more on the union vote.",
-            },
+            {"block_index": 0, "start_ms": 0, "end_ms": 600_000, "text": text_value},
+            {"block_index": 1, "start_ms": 600_000, "end_ms": 1_200_000, "text": text_value},
         ],
     )
     result = OpenRouterEpisodeResult(
@@ -518,20 +509,20 @@ def test_persist_enrichment_drops_noise_labels_and_holds_review_labels():
         provider="provider",
         prompt_version="prompt-v1",
         candidate=EpisodeEnrichmentCandidate(
-            subjects=["Zohran Mamdani", "chat"],
-            keywords=["union vote", "the stream"],
+            subjects=["Donald Trump", "Gaza ceasefire", "labor organizing", "stream", "chat"],
+            keywords=["the union vote"],
             categories=[{"slug": "politics", "evidence_block_indexes": [0, 1]}],
             chapters=[
                 {
                     "start_ms": 0,
-                    "title": "Mamdani and the union vote",
-                    "summary": "A union vote.",
+                    "title": "Trump and the Gaza ceasefire",
+                    "summary": "The Gaza ceasefire.",
                     "evidence_block_indexes": [0],
                 },
                 {
                     "start_ms": 600_000,
-                    "title": "More on the union vote",
-                    "summary": "The union vote.",
+                    "title": "Labor organizing and a union vote",
+                    "summary": "A union vote.",
                     "evidence_block_indexes": [1],
                 },
             ],
@@ -553,9 +544,11 @@ def test_persist_enrichment_drops_noise_labels_and_holds_review_labels():
         ),
     )
     by_label = {item["label_id"]: item for item in assignments}
-    assert set(by_label) == {"Politics", "Zohran Mamdani", "union vote"}
-    assert "quality_review" not in by_label["Zohran Mamdani"]["component_scores"]
-    assert by_label["union vote"]["component_scores"]["quality_review"] == 1.0
+    assert set(by_label) == {"Politics", "Donald Trump", "Gaza ceasefire", "labor organizing", "the union vote"}
+    for label in ("Donald Trump", "Gaza ceasefire", "labor organizing"):
+        assert "quality_review" not in by_label[label]["component_scores"], label
+    # "the union vote" carries a weak-opener signal, so approval leaves it for an editor.
+    assert by_label["the union vote"]["component_scores"]["quality_review"] == 1.0
     assert all(item["status"] == "candidate" for item in assignments)
     assert metrics["skipped_low_quality_labels"] == 2
     assert metrics["held_for_review_labels"] == 1
