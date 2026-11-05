@@ -239,6 +239,7 @@ class SearchHit(BaseModel):
     video_title: Optional[str] = Field(None, description="Video title for progressive archive UIs")
     channel_name: Optional[str] = Field(None, description="Channel name for progressive archive UIs")
     uploaded_at: Optional[datetime] = Field(None, description="Video upload time")
+    broadcast_date: Optional[date] = Field(None, description="Local date of the broadcast")
     duration_seconds: Optional[int] = Field(None, description="Video duration in seconds")
     title_match: bool = Field(
         False,
@@ -359,6 +360,7 @@ class TimelineBucket(BaseModel):
     label: str = Field(..., description="Human-readable bucket label")
     video_count: int = Field(..., description="Number of videos in the bucket")
     total_duration_seconds: int = Field(..., description="Total duration for videos in the bucket")
+    coverage: Optional["PeriodCoverage"] = Field(None, description="Day coverage for the bucket, by broadcast date")
     videos: List["VideoInfo"] = Field(default_factory=list, description="Videos in chronological order")
 
 
@@ -662,7 +664,16 @@ class ArchiveVideoMetadataAdminVideo(BaseModel):
     state: Optional[str] = Field(None, description="Processing state")
     caption_ingest_state: Optional[str] = Field(None, description="YouTube caption ingest state")
     diarization_state: Optional[str] = Field(None, description="Diarization state")
-    uploaded_at: Optional[datetime] = Field(None, description="YouTube upload or stream publish time")
+    uploaded_at: Optional[datetime] = Field(None, description="YouTube upload time (not the broadcast date)")
+    broadcast_date: Optional[date] = Field(
+        None, description="Local date of the broadcast, parsed from the title or approximated by the upload day"
+    )
+    broadcast_date_source: Optional[Literal["title", "upload_date", "manual"]] = Field(
+        None, description="Where broadcast_date came from; upload_date means an approximation"
+    )
+    broadcast_kind: Literal["vod", "no_stream", "extra"] = Field(
+        "vod", description="vod (full broadcast), no_stream (placeholder for a day off) or extra (clip, interview)"
+    )
     created_at: Optional[datetime] = Field(None, description="Local row creation time")
     updated_at: Optional[datetime] = Field(None, description="Local row update time")
     channel_name: Optional[str] = Field(None, description="YouTube channel name")
@@ -785,6 +796,22 @@ class ArchiveChapterSetReviewAction(BaseModel):
     reason: Optional[str] = Field(None, max_length=1000)
 
 
+class PeriodCoverage(BaseModel):
+    """How completely the archive covers the days in a period.
+
+    Every counted day is exactly one of: covered by a full VOD, a confirmed day
+    off (a "no stream" placeholder upload), or unknown (nothing archived).
+    """
+
+    days: int = Field(..., description="Days in the period that have elapsed and fall within the archive's span")
+    vod_days: int = Field(..., description="Days with at least one archived full broadcast")
+    no_stream_days: int = Field(..., description="Days confirmed as no-stream days, with no archived broadcast")
+    unknown_days: int = Field(..., description="Days with neither an archived broadcast nor a no-stream notice")
+    missing_dates: List[date] = Field(
+        default_factory=list, description="Unknown days, oldest first, capped at 62 entries"
+    )
+
+
 class ArchivePeriodOption(BaseModel):
     slug: str = Field(..., description="Stable period slug")
     label: str = Field(..., description="Public period label")
@@ -796,6 +823,7 @@ class ArchivePeriodOption(BaseModel):
     recurring_day: Optional[int] = Field(None, description="Recurring day for annual date periods")
     video_count: int = Field(0, description="Cached video count for the period")
     total_duration_seconds: int = Field(0, description="Cached duration for the period")
+    coverage: Optional[PeriodCoverage] = Field(None, description="Day coverage for the period, by broadcast date")
 
 
 class ArchivePeriodOptionsResponse(BaseModel):
@@ -808,6 +836,7 @@ class ArchivePeriodIntelligence(BaseModel):
     label: str = Field(..., description="Human-readable period label")
     video_count: int = Field(..., description="VOD count in this period")
     total_duration_seconds: int = Field(..., description="Total VOD duration in this period")
+    coverage: Optional[PeriodCoverage] = Field(None, description="Day coverage for the period, by broadcast date")
     videos: List["VideoInfo"] = Field(default_factory=list, description="Representative VODs")
     top_topics: List[ArchiveTopicCard] = Field(default_factory=list, description="Top topics for the period")
     summary: str = Field(..., description="Extractive or generated period summary")
@@ -902,7 +931,16 @@ class VideoInfo(BaseModel):
     state: Optional[str] = Field(None, description="Processing state")
     caption_ingest_state: Optional[str] = Field(None, description="YouTube caption ingest state")
     diarization_state: Optional[str] = Field(None, description="Diarization state")
-    uploaded_at: Optional[datetime] = Field(None, description="YouTube upload or stream publish time")
+    uploaded_at: Optional[datetime] = Field(None, description="YouTube upload time (not the broadcast date)")
+    broadcast_date: Optional[date] = Field(
+        None, description="Local date of the broadcast, parsed from the title or approximated by the upload day"
+    )
+    broadcast_date_source: Optional[Literal["title", "upload_date", "manual"]] = Field(
+        None, description="Where broadcast_date came from; upload_date means an approximation"
+    )
+    broadcast_kind: Literal["vod", "no_stream", "extra"] = Field(
+        "vod", description="vod (full broadcast), no_stream (placeholder for a day off) or extra (clip, interview)"
+    )
     created_at: Optional[datetime] = Field(None, description="Local row creation time")
     updated_at: Optional[datetime] = Field(None, description="Local row update time")
     channel_name: Optional[str] = Field(None, description="YouTube channel name")

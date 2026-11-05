@@ -259,6 +259,7 @@ class SearchOrchestrator:
                     video_title=r.get("video_title"),
                     channel_name=r.get("channel_name"),
                     uploaded_at=r.get("uploaded_at"),
+                    broadcast_date=r.get("broadcast_date"),
                     duration_seconds=r.get("duration_seconds"),
                     title_match=bool(r.get("title_match")),
                 )
@@ -318,6 +319,7 @@ class SearchOrchestrator:
                     video_title=r.get("video_title"),
                     channel_name=r.get("channel_name"),
                     uploaded_at=r.get("uploaded_at"),
+                    broadcast_date=r.get("broadcast_date"),
                     duration_seconds=r.get("duration_seconds"),
                     title_match=bool(r.get("title_match")),
                 )

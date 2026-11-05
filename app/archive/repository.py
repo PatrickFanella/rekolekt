@@ -67,12 +67,13 @@ class ArchiveRepository:
                     SELECT
                         v.id, v.youtube_id, v.title, v.duration_seconds, v.state,
                         v.caption_ingest_state, v.diarization_state, v.uploaded_at,
+                    v.broadcast_date, v.broadcast_date_source, v.broadcast_kind,
                         v.created_at, v.updated_at, v.channel_name, v.language, v.category,
                         EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id) AS has_whisper_transcript,
                         EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript
                     FROM videos v
                     WHERE ({ARCHIVE_VIDEO_FILTER_SQL})
-                    ORDER BY v.uploaded_at DESC NULLS LAST, v.created_at DESC
+                    ORDER BY v.broadcast_date DESC NULLS LAST, v.uploaded_at DESC NULLS LAST, v.created_at DESC
                     LIMIT :limit
                     """),
                 {"limit": recent_limit},

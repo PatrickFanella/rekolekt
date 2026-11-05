@@ -65,15 +65,48 @@ def week_bounds(value: date) -> tuple[date, date]:
     return monday, monday + timedelta(days=6)
 
 
+def period_end(period: str, granularity: str) -> date | None:
+    """Inclusive last day of a week or month period key."""
+
+    start = period_start(period, granularity)
+    if start is None:
+        return None
+    return bucket_bounds(start.date(), granularity)[1]
+
+
 def within_period_range(
     period: str,
     granularity: str,
     date_from: date | datetime | None,
     date_to: date | datetime | None,
 ) -> bool:
+    """True when the period overlaps the inclusive range, not only when it starts inside it."""
+
     start = period_start(period, granularity)
-    if start is None:
+    end = period_end(period, granularity)
+    if start is None or end is None:
         return True
-    lower = coerce_datetime(date_from)
-    upper = coerce_datetime(date_to, end=True)
-    return not ((lower is not None and start < lower) or (upper is not None and start >= upper))
+    lower = as_date(date_from)
+    upper = as_date(date_to)
+    return not ((lower is not None and end < lower) or (upper is not None and start.date() > upper))
+
+
+def bucket_bounds(bucket_start: date, granularity: str) -> tuple[date, date]:
+    """Inclusive first and last day of the week, month or year containing ``bucket_start``."""
+
+    if granularity == "year":
+        return date(bucket_start.year, 1, 1), date(bucket_start.year, 12, 31)
+    if granularity == "week":
+        return week_bounds(bucket_start)
+    return month_bounds(bucket_start)
+
+
+def bucket_period_and_label(bucket_start: date, granularity: str) -> tuple[str, str]:
+    """Stable key and display label; week labels match named week periods."""
+
+    if granularity == "year":
+        return bucket_start.strftime("%Y"), bucket_start.strftime("%Y")
+    if granularity == "week":
+        monday = week_bounds(bucket_start)[0]
+        return monday.strftime("%G-W%V"), f"Week of {monday.isoformat()}"
+    return bucket_start.strftime("%Y-%m"), bucket_start.strftime("%B %Y")

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import uuid
 
+from app.archive.broadcast_dates import video_broadcast_at
+
 from ..feed_cursor import CursorError, FeedCursor, decode_cursor, encode_cursor, filter_fingerprint
 from ..schemas import (
     ArchiveDiscoveryResponse,
@@ -81,4 +83,4 @@ def build_discovery_page(
 
 
 def _effective_video_date(item: ArchiveMomentDiscoveryItem):
-    return item.video.uploaded_at or item.video.created_at
+    return video_broadcast_at(item.video)

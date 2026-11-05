@@ -18,7 +18,7 @@ def test_published_label_cards_rank_evidence_per_label():
     assert "a.label_id = l.id" in sql
     assert "l.source IN ('admin', 'seed', 'hybrid')" in sql
     assert "COUNT(*) OVER () AS label_assignment_count" in sql
-    assert "v.uploaded_at >= :date_from" in sql
+    assert "(v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :date_from" in sql
     assert "LIMIT :per_label_limit" in sql
     assert params["per_label_limit"] == 2
     assert params["limit"] == 64

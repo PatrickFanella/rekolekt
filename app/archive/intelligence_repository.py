@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
 from app.archive import intelligence_queries as query_domains
+from app.archive.broadcast_dates import coverage_for_range, load_day_index, refresh_broadcast_dates
 from app.archive.intelligence_facets import attach_archive_facets
 from app.archive.query_support import execute as _safe_execute
 from app.archive.query_support import execute_many as _safe_execute_many
@@ -31,6 +32,7 @@ from app.schemas import (
     ArchivePeriodOptionsResponse,
     ArchiveTopicCard,
     ArchiveTrendingSearch,
+    PeriodCoverage,
     VideoInfo,
 )
 from app.settings import settings
@@ -174,6 +176,14 @@ CURATED_NAMED_PERIODS: tuple[dict[str, object], ...] = (
         "date_from": date(2021, 8, 15),
         "date_to": date(2021, 8, 31),
         "description": "The fall of Kabul and the final U.S. withdrawal from Afghanistan",
+    },
+    {
+        "slug": "2026-midterms-leadup",
+        "label": "2026 Midterms Leadup",
+        "kind": "leadup",
+        "date_from": date(2026, 10, 1),
+        "date_to": date(2026, 11, 3),
+        "description": "Leadup to the 2026 U.S. midterms",
     },
     {
         "slug": "2024-election-leadup",
@@ -591,6 +601,33 @@ def _as_list(value):
     return [value]
 
 
+def _coverage_model(value) -> PeriodCoverage | None:
+    if isinstance(value, str):
+        value = json.loads(value)
+    return PeriodCoverage.model_validate(value) if value else None
+
+
+def _coverage_json(coverage: dict | None) -> str | None:
+    if coverage is None:
+        return None
+    return json.dumps({**coverage, "missing_dates": [day.isoformat() for day in coverage["missing_dates"]]})
+
+
+def _period_key_coverage(day_index, period: str, granularity: str) -> PeriodCoverage | None:
+    start = _period_start(period, granularity)
+    end = query_domains.periods.period_end(period, granularity)
+    if start is None or end is None:
+        return None
+    coverage = coverage_for_range(day_index, start.date(), end)
+    return PeriodCoverage.model_validate(coverage) if coverage else None
+
+
+def _broadcast_at(value: date | None) -> datetime | None:
+    """Midnight UTC of a broadcast date, matching BROADCAST_AT_SQL."""
+
+    return _coerce_datetime(value) if value is not None else None
+
+
 def _seed_today() -> date:
     return date.today()
 
@@ -607,6 +644,7 @@ def _named_period_option_row(row) -> ArchivePeriodOption:
         recurring_day=row.get("recurring_day"),
         video_count=int(row.get("video_count") or 0),
         total_duration_seconds=int(row.get("total_duration_seconds") or 0),
+        coverage=_coverage_model(row.get("coverage")),
     )
 
 
@@ -750,6 +788,9 @@ def _video_from_row(row) -> VideoInfo:
         caption_ingest_state=row.get("caption_ingest_state"),
         diarization_state=row.get("diarization_state"),
         uploaded_at=row.get("uploaded_at"),
+        broadcast_date=row.get("broadcast_date"),
+        broadcast_date_source=row.get("broadcast_date_source"),
+        broadcast_kind=row.get("broadcast_kind") or "vod",
         created_at=row.get("created_at"),
         updated_at=row.get("updated_at"),
         channel_name=row.get("channel_name"),
@@ -865,18 +906,19 @@ def _shift_years(value: date, years: int) -> date:
         return value.replace(year=value.year - years, day=28)
 
 
-def _named_period_records_from_videos(db, years_back: int) -> list[dict[str, object]]:
-    cutoff = _shift_years(date.today(), years_back)
+def _named_period_records_from_videos(db, years_back: int | None) -> list[dict[str, object]]:
+    cutoff = _shift_years(date.today(), years_back) if years_back else date.min
     month_rows = _safe_mappings(
         db,
         """
-        SELECT DISTINCT date_trunc('month', v.uploaded_at)::date AS period_start
+        SELECT DISTINCT date_trunc('month', v.broadcast_date)::date AS period_start
         FROM videos v
         WHERE ("""
         + ARCHIVE_VIDEO_FILTER_SQL
         + """)
-          AND v.uploaded_at IS NOT NULL
-          AND v.uploaded_at::date >= :cutoff
+          AND v.broadcast_date IS NOT NULL
+          AND v.broadcast_kind <> 'no_stream'
+          AND v.broadcast_date >= :cutoff
         ORDER BY period_start DESC
         """,
         {"cutoff": cutoff},
@@ -884,13 +926,14 @@ def _named_period_records_from_videos(db, years_back: int) -> list[dict[str, obj
     week_rows = _safe_mappings(
         db,
         """
-        SELECT DISTINCT date_trunc('week', v.uploaded_at)::date AS period_start
+        SELECT DISTINCT date_trunc('week', v.broadcast_date)::date AS period_start
         FROM videos v
         WHERE ("""
         + ARCHIVE_VIDEO_FILTER_SQL
         + """)
-          AND v.uploaded_at IS NOT NULL
-          AND v.uploaded_at::date >= :cutoff
+          AND v.broadcast_date IS NOT NULL
+          AND v.broadcast_kind <> 'no_stream'
+          AND v.broadcast_date >= :cutoff
         ORDER BY period_start DESC
         """,
         {"cutoff": cutoff},
@@ -940,26 +983,10 @@ def _named_period_records_from_videos(db, years_back: int) -> list[dict[str, obj
         assert isinstance(curated_date_to, date)
         records.append({**record, "status": "published", "sort_order": curated_date_to.toordinal()})
 
-    if settings.ARCHIVE_EDITORIAL_PRESET == "hasanara":
-        midterms_date_to = date(2026, 11, 3)
-        midterms_date_from = min(_seed_today(), midterms_date_to)
-        records.append(
-            {
-                "slug": "2026-midterms-leadup",
-                "label": "2026 Midterms Leadup",
-                "kind": "leadup",
-                "date_from": midterms_date_from,
-                "date_to": midterms_date_to,
-                "description": "Leadup to the 2026 U.S. midterms",
-                "status": "published",
-                "sort_order": midterms_date_to.toordinal(),
-            }
-        )
-
     return records
 
 
-def seed_named_periods(db, years_back: int = 6):
+def seed_named_periods(db, years_back: int | None = None):
     for slug in (RETIRED_NAMED_PERIOD_SLUGS if settings.ARCHIVE_EDITORIAL_PRESET == "hasanara" else ()):
         _safe_execute(
             db,
@@ -1173,6 +1200,7 @@ def list_period_options(db, kind: str | None = None, limit: int = 120) -> Archiv
             p.recurring_day,
             COALESCE(s.video_count, 0) AS video_count,
             COALESCE(s.total_duration_seconds, 0) AS total_duration_seconds,
+            s.coverage,
             COALESCE(s.summary, '') AS summary
         FROM archive_named_periods p
         LEFT JOIN archive_named_period_stats s ON s.period_id = p.id
@@ -1204,6 +1232,7 @@ def _named_period_row_by_slug(db, period_slug: str):
             p.recurring_day,
             COALESCE(s.video_count, 0) AS video_count,
             COALESCE(s.total_duration_seconds, 0) AS total_duration_seconds,
+            s.coverage,
             COALESCE(s.top_topics, '[]'::jsonb) AS top_topics,
             COALESCE(s.representative_videos, '[]'::jsonb) AS representative_videos,
             COALESCE(s.evidence, '[]'::jsonb) AS evidence,
@@ -1314,12 +1343,12 @@ def published_label_cards_for_period(
     lower = _coerce_datetime(date_from)
     upper = _coerce_datetime(date_to, end=True)
     if lower is not None or upper is not None:
-        assignment_where_parts.append("v.uploaded_at IS NOT NULL")
+        assignment_where_parts.append("v.broadcast_date IS NOT NULL AND v.broadcast_kind <> 'no_stream'")
     if lower is not None:
-        assignment_where_parts.append("v.uploaded_at >= :date_from")
+        assignment_where_parts.append("(v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :date_from")
         params["date_from"] = lower
     if upper is not None:
-        assignment_where_parts.append("v.uploaded_at < :date_to")
+        assignment_where_parts.append("(v.broadcast_date::timestamp AT TIME ZONE 'UTC') < :date_to")
         params["date_to"] = upper
 
     rows = _safe_mappings(
@@ -1349,6 +1378,9 @@ def published_label_cards_for_period(
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1361,7 +1393,7 @@ def published_label_cards_for_period(
             WHERE a.label_id = l.id
               AND {' AND '.join(assignment_where_parts)}
             ORDER BY a.confidence_score DESC, a.evidence_count DESC,
-                     COALESCE(v.uploaded_at, v.created_at) DESC NULLS LAST
+                     COALESCE((v.broadcast_date::timestamp AT TIME ZONE 'UTC'), v.created_at) DESC NULLS LAST
             LIMIT :per_label_limit
         ) evidence
         WHERE l.status = 'published'
@@ -1369,7 +1401,7 @@ def published_label_cards_for_period(
         ORDER BY evidence.label_assignment_count DESC, l.label ASC,
                  evidence.assignment_confidence DESC,
                  evidence.evidence_count DESC,
-                 COALESCE(evidence.uploaded_at, evidence.created_at) DESC NULLS LAST
+                 COALESCE(evidence.broadcast_date::timestamp AT TIME ZONE 'UTC', evidence.created_at) DESC NULLS LAST
         LIMIT :limit
         """,
         params,
@@ -1428,6 +1460,9 @@ def _fallback_evidence_for_videos(db, videos: list[VideoInfo], limit: int = 200)
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1454,6 +1489,9 @@ def _fallback_evidence_for_videos(db, videos: list[VideoInfo], limit: int = 200)
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1470,7 +1508,7 @@ def _fallback_evidence_for_videos(db, videos: list[VideoInfo], limit: int = 200)
             JOIN youtube_segments ys ON ys.youtube_transcript_id = yt.id
             WHERE v.id IN ({placeholders})
         ) transcript_segments
-        ORDER BY COALESCE(uploaded_at, created_at) DESC NULLS LAST, transcript_source_priority ASC, start_ms ASC
+        ORDER BY COALESCE(broadcast_date::timestamp AT TIME ZONE 'UTC', created_at) DESC NULLS LAST, transcript_source_priority ASC, start_ms ASC
         LIMIT :limit
         """,
         {**params, "limit": limit},
@@ -1541,6 +1579,7 @@ def _period_intelligence_from_row(row, topic_limit: int | None = None) -> Archiv
         label=row["label"],
         video_count=int(row.get("video_count") or 0),
         total_duration_seconds=int(row.get("total_duration_seconds") or 0),
+        coverage=_coverage_model(row.get("coverage")),
         videos=videos,
         top_topics=top_topics,
         summary=row.get("summary") or "",
@@ -1560,14 +1599,15 @@ def _period_option_from_row(row) -> ArchivePeriodOption:
         recurring_day=row.get("recurring_day"),
         video_count=int(row.get("video_count") or 0),
         total_duration_seconds=int(row.get("total_duration_seconds") or 0),
+        coverage=_coverage_model(row.get("coverage")),
     )
 
 
 def _video_is_in_named_period(video: VideoInfo, period: ArchivePeriodOption) -> bool:
-    when_at = video.uploaded_at or video.created_at
-    if when_at is None:
+    # Payloads cached before broadcast dates existed carry only uploaded_at.
+    video_date = video.broadcast_date or (video.uploaded_at.date() if video.uploaded_at else None)
+    if video_date is None:
         return False
-    video_date = when_at.date()
     if period.recurring_month and period.recurring_day:
         return video_date.month == period.recurring_month and video_date.day == period.recurring_day
     return period.date_from <= video_date <= period.date_to
@@ -1622,6 +1662,7 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
     topics = _get_topics(db)
     topic_rows_by_id = {str(row["id"]): row for row in topics}
     insert_rows: list[dict] = []
+    day_index = load_day_index(db)
 
     for row in rows:
         start_dt = _coerce_datetime(row.get("date_from"))
@@ -1635,12 +1676,12 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
         if is_recurring_date:
             assert recurring_month is not None and recurring_day is not None
             video_period_sql = """
-              AND EXTRACT(MONTH FROM v.uploaded_at) = :recurring_month
-              AND EXTRACT(DAY FROM v.uploaded_at) = :recurring_day
+              AND EXTRACT(MONTH FROM v.broadcast_date) = :recurring_month
+              AND EXTRACT(DAY FROM v.broadcast_date) = :recurring_day
             """
             mention_period_sql = """
-              AND EXTRACT(MONTH FROM COALESCE(m.occurred_at, v.uploaded_at, v.created_at)) = :recurring_month
-              AND EXTRACT(DAY FROM COALESCE(m.occurred_at, v.uploaded_at, v.created_at)) = :recurring_day
+              AND EXTRACT(MONTH FROM (v.broadcast_date::timestamp AT TIME ZONE 'UTC')) = :recurring_month
+              AND EXTRACT(DAY FROM (v.broadcast_date::timestamp AT TIME ZONE 'UTC')) = :recurring_day
             """
             period_params: dict[str, object] = {
                 "recurring_month": int(recurring_month),
@@ -1648,12 +1689,12 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
             }
         else:
             video_period_sql = """
-              AND v.uploaded_at >= :start_dt
-              AND v.uploaded_at < :end_dt
+              AND (v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :start_dt
+              AND (v.broadcast_date::timestamp AT TIME ZONE 'UTC') < :end_dt
             """
             mention_period_sql = """
-              AND COALESCE(m.occurred_at, v.uploaded_at, v.created_at) >= :start_dt
-              AND COALESCE(m.occurred_at, v.uploaded_at, v.created_at) < :end_dt
+              AND (v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :start_dt
+              AND (v.broadcast_date::timestamp AT TIME ZONE 'UTC') < :end_dt
             """
             period_params = {"start_dt": start_dt, "end_dt": end_dt}
 
@@ -1669,6 +1710,9 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1676,12 +1720,12 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
                 v.category,
                 EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id) AS has_whisper_transcript,
                 EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript,
-                v.uploaded_at AS when_at
+                (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at
             FROM videos v
             WHERE ({ARCHIVE_VIDEO_FILTER_SQL})
-              AND v.uploaded_at IS NOT NULL
+              AND v.broadcast_date IS NOT NULL AND v.broadcast_kind <> 'no_stream'
               {video_period_sql}
-            ORDER BY v.uploaded_at DESC NULLS LAST, v.created_at DESC
+            ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, v.created_at DESC
             """,
             period_params,
         )
@@ -1705,6 +1749,9 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1715,7 +1762,7 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
                 m.end_ms,
                 m.snippet,
                 m.score,
-                COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at,
+                (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at,
                 EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
                 EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript
             FROM archive_topic_mentions m
@@ -1724,7 +1771,7 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
             WHERE t.status = 'published'
               AND ({ARCHIVE_VIDEO_FILTER_SQL})
               {mention_period_sql}
-            ORDER BY COALESCE(m.occurred_at, v.uploaded_at, v.created_at) DESC NULLS LAST, m.start_ms ASC
+            ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, m.start_ms ASC
             """,
             period_params,
         )
@@ -1804,6 +1851,9 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
                 "total_duration_seconds": int(
                     sum(int(video_row.get("duration_seconds") or 0) for video_row in video_rows)
                 ),
+                "coverage": _coverage_json(
+                    None if is_recurring_date else coverage_for_range(day_index, row["date_from"], row["date_to"])
+                ),
                 "top_topics": json.dumps(topic_mentions_payload),
                 "representative_videos": json.dumps(representative_videos),
                 "evidence": json.dumps(evidence_payload),
@@ -1815,13 +1865,15 @@ def refresh_named_period_stats(db, limit: int | None = None, period_slug: str | 
         db,
         """
         INSERT INTO archive_named_period_stats (
-            period_id, video_count, total_duration_seconds, top_topics, representative_videos, evidence, summary, calculated_at
+            period_id, video_count, total_duration_seconds, coverage, top_topics, representative_videos, evidence, summary,
+            calculated_at
         ) VALUES (
-            :period_id, :video_count, :total_duration_seconds, CAST(:top_topics AS jsonb), CAST(:representative_videos AS jsonb), CAST(:evidence AS jsonb), :summary, now()
+            :period_id, :video_count, :total_duration_seconds, CAST(:coverage AS jsonb), CAST(:top_topics AS jsonb), CAST(:representative_videos AS jsonb), CAST(:evidence AS jsonb), :summary, now()
         )
         ON CONFLICT (period_id) DO UPDATE SET
             video_count = EXCLUDED.video_count,
             total_duration_seconds = EXCLUDED.total_duration_seconds,
+            coverage = EXCLUDED.coverage,
             top_topics = EXCLUDED.top_topics,
             representative_videos = EXCLUDED.representative_videos,
             evidence = EXCLUDED.evidence,
@@ -1936,6 +1988,9 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1963,6 +2018,9 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
                 v.caption_ingest_state,
                 v.diarization_state,
                 v.uploaded_at,
+                v.broadcast_date,
+                v.broadcast_date_source,
+                v.broadcast_kind,
                 v.created_at,
                 v.updated_at,
                 v.channel_name,
@@ -1977,7 +2035,7 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
             WHERE ({ARCHIVE_VIDEO_FILTER_SQL})
         ) transcript_segments
         WHERE {alias_filter_sql}
-        ORDER BY COALESCE(uploaded_at, created_at) DESC NULLS LAST, transcript_source_priority ASC, start_ms ASC
+        ORDER BY COALESCE(broadcast_date::timestamp AT TIME ZONE 'UTC', created_at) DESC NULLS LAST, transcript_source_priority ASC, start_ms ASC
         {limit_sql}
         """,
             params,
@@ -2008,7 +2066,7 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
                 "end_ms": int(row["end_ms"]),
                 "snippet": row["snippet"],
                 "score": best_weight or 1,
-                "occurred_at": row.get("uploaded_at"),
+                "occurred_at": _broadcast_at(row.get("broadcast_date")),
             }
             if existing is None or float(mention["score"]) > float(existing["score"]):
                 mentions_by_key[mention_key] = mention
@@ -2109,11 +2167,11 @@ def refresh_topic_period_stats(db, granularity: str = "month"):
             m.snippet,
             m.score,
             m.occurred_at,
-            COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at
+            (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at
         FROM archive_topic_mentions m
         JOIN videos v ON v.id = m.video_id
         WHERE m.topic_id IN ({topic_placeholders})
-        ORDER BY COALESCE(m.occurred_at, v.uploaded_at, v.created_at) DESC NULLS LAST, m.start_ms ASC
+        ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, m.start_ms ASC
         """,
         topic_params,
     )
@@ -2248,7 +2306,7 @@ def refresh_search_trends(db, granularity: str = "week"):
     return {"rows": len(insert_rows)}
 
 
-def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
+def refresh_period_summaries(db, granularity: str = "month", limit: int | None = 120):
     if granularity not in {"month", "week"}:
         granularity = "month"
 
@@ -2270,6 +2328,9 @@ def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
             v.caption_ingest_state,
             v.diarization_state,
             v.uploaded_at,
+            v.broadcast_date,
+            v.broadcast_date_source,
+            v.broadcast_kind,
             v.created_at,
             v.updated_at,
             v.channel_name,
@@ -2277,11 +2338,11 @@ def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
             v.category,
             EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id) AS has_whisper_transcript,
             EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript,
-            COALESCE(v.uploaded_at, v.created_at) AS when_at
+            COALESCE((v.broadcast_date::timestamp AT TIME ZONE 'UTC'), v.created_at) AS when_at
         FROM videos v
         WHERE ({ARCHIVE_VIDEO_FILTER_SQL})
-          AND v.uploaded_at IS NOT NULL
-        ORDER BY v.uploaded_at DESC NULLS LAST
+          AND v.broadcast_date IS NOT NULL AND v.broadcast_kind <> 'no_stream'
+        ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST
         """,
     )
     video_metadata_map = _safe_video_metadata_map(db, [row["video_id"] for row in video_rows])
@@ -2305,6 +2366,9 @@ def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
             v.caption_ingest_state,
             v.diarization_state,
             v.uploaded_at,
+            v.broadcast_date,
+            v.broadcast_date_source,
+            v.broadcast_kind,
             v.created_at,
             v.updated_at,
             v.channel_name,
@@ -2315,14 +2379,14 @@ def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
             m.end_ms,
             m.snippet,
             m.score,
-            COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at,
+            (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at,
             EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
             EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript
         FROM archive_topic_mentions m
         JOIN archive_topics t ON t.id = m.topic_id
         JOIN videos v ON v.id = m.video_id
         WHERE t.status = 'published'
-        ORDER BY COALESCE(m.occurred_at, v.uploaded_at, v.created_at) DESC NULLS LAST, m.start_ms ASC
+        ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, m.start_ms ASC
         """,
     )
     mention_metadata_map = _safe_video_metadata_map(db, [row["video_id"] for row in mention_rows])
@@ -2401,7 +2465,9 @@ def refresh_period_summaries(db, granularity: str = "month", limit: int = 120):
 
 
 def refresh_archive_intelligence(db, quick: bool = False):
-    stats = {}
+    # Titles can change after ingest; keep derived broadcast dates current
+    # before anything is bucketed by them.
+    stats = {"broadcast_dates_updated": refresh_broadcast_dates(db)}
     for prefix, result in (
         ("seed", seed_archive_topics(db)),
         ("seed_periods", seed_named_periods(db)),
@@ -2423,8 +2489,8 @@ def refresh_archive_intelligence(db, quick: bool = False):
         ("topic_stats_week", refresh_topic_period_stats(db, granularity="week")),
         ("named_period_stats", refresh_named_period_stats(db)),
         ("search_trends", refresh_search_trends(db, granularity="week")),
-        ("period_summaries", refresh_period_summaries(db, granularity="month", limit=120 if not quick else 72)),
-        ("period_summaries_week", refresh_period_summaries(db, granularity="week", limit=120 if not quick else 72)),
+        ("period_summaries", refresh_period_summaries(db, granularity="month", limit=None if not quick else 72)),
+        ("period_summaries_week", refresh_period_summaries(db, granularity="week", limit=None if not quick else 72)),
     ):
         for key, value in result.items():
             stats[f"{prefix}_{key}"] = value
@@ -2445,6 +2511,9 @@ def _topic_evidence_for_period(db, topic_id, period: str, granularity: str, limi
             v.caption_ingest_state,
             v.diarization_state,
             v.uploaded_at,
+            v.broadcast_date,
+            v.broadcast_date_source,
+            v.broadcast_kind,
             v.created_at,
             v.updated_at,
             v.channel_name,
@@ -2455,11 +2524,11 @@ def _topic_evidence_for_period(db, topic_id, period: str, granularity: str, limi
             m.snippet,
             EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
             EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript,
-            COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at
+            (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at
         FROM archive_topic_mentions m
         JOIN videos v ON v.id = m.video_id
         WHERE m.topic_id = :topic_id
-        ORDER BY COALESCE(m.occurred_at, v.uploaded_at, v.created_at) DESC NULLS LAST, m.start_ms ASC
+        ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, m.start_ms ASC
         """,
         {"topic_id": topic_id},
     )
@@ -2571,7 +2640,15 @@ def get_durable_archive_intelligence(
 ) -> ArchiveIntelligenceResponse | None:
     if granularity not in {"month", "week"}:
         granularity = "month"
-    if _table_has_rows(db, "archive_named_periods") and _table_has_rows(db, "archive_named_period_stats"):
+    # An explicit range or week view asks for calendar buckets; only fall back
+    # to the latest named period when nothing narrower was requested.
+    custom_range = date_from is not None or date_to is not None
+    wants_named_period = period_slug is not None or (not custom_range and granularity == "month")
+    if (
+        wants_named_period
+        and _table_has_rows(db, "archive_named_periods")
+        and _table_has_rows(db, "archive_named_period_stats")
+    ):
         named_period_slug = period_slug or _latest_named_period_slug(db)
         named = (
             get_named_period_intelligence(db, named_period_slug, topic_limit=topic_limit) if named_period_slug else None
@@ -2640,6 +2717,9 @@ def get_durable_archive_intelligence(
             v.caption_ingest_state,
             v.diarization_state,
             v.uploaded_at,
+            v.broadcast_date,
+            v.broadcast_date_source,
+            v.broadcast_kind,
             v.created_at,
             v.updated_at,
             v.channel_name,
@@ -2653,13 +2733,13 @@ def get_durable_archive_intelligence(
             m.occurred_at,
             EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
             EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript,
-            COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at
+            (v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at
         FROM archive_topic_mentions m
         JOIN archive_topics t ON t.id = m.topic_id
         JOIN videos v ON v.id = m.video_id
         WHERE m.topic_id IN ({topic_placeholders})
           AND t.status = 'published'
-        ORDER BY COALESCE(m.occurred_at, v.uploaded_at, v.created_at) DESC NULLS LAST, m.start_ms ASC
+        ORDER BY (v.broadcast_date::timestamp AT TIME ZONE 'UTC') DESC NULLS LAST, m.start_ms ASC
         """,
         topic_params,
     )
@@ -2682,12 +2762,14 @@ def get_durable_archive_intelligence(
 
     topic_rows_by_id = {str(row["id"]): row for row in topics}
     topic_aggregate: dict[str, dict] = defaultdict(
-        lambda: {"mention_count": 0, "video_ids": set(), "recent_mentions_90d": 0, "trend_score": 0.0, "periods": set()}
+        lambda: {"mention_count": 0, "video_count": 0, "recent_mentions_90d": 0, "trend_score": 0.0, "periods": set()}
     )
     for row in stats_rows:
         agg = topic_aggregate[str(row["topic_id"])]
         agg["mention_count"] += int(row.get("mention_count") or 0)
-        agg["video_ids"].update(_as_list(row.get("top_video_ids")))
+        # Each video falls in exactly one period, so per-period counts add up
+        # exactly; top_video_ids is capped and would undercount.
+        agg["video_count"] += int(row.get("video_count") or 0)
         agg["recent_mentions_90d"] += int(row.get("recent_mentions_90d") or 0)
         agg["trend_score"] += float(row.get("trend_score") or 0)
         agg["periods"].add(row["period"])
@@ -2726,7 +2808,7 @@ def get_durable_archive_intelligence(
                     if (alias_row or {}).get("alias")
                 ],
                 total_moments=int(agg["mention_count"]),
-                total_videos=len({str(video_id) for video_id in agg["video_ids"]}),
+                total_videos=int(agg["video_count"]),
                 recent_mentions_90d=int(agg["recent_mentions_90d"]),
                 trend_score=float(agg["trend_score"]),
                 related_topics=related_topics[:3],
@@ -2806,6 +2888,7 @@ def get_durable_archive_intelligence(
     )
     period_rows = [row for row in period_rows if _within_period_range(row["period"], granularity, date_from, date_to)]
     periods: list[ArchivePeriodIntelligence] = []
+    day_index = load_day_index(db)
     for row in period_rows[:period_limit]:
         period = str(row["period"] or "")
         if not period:
@@ -2908,6 +2991,7 @@ def get_durable_archive_intelligence(
                 label=_period_label(period, granularity),
                 video_count=int(row.get("video_count") or 0),
                 total_duration_seconds=int(row.get("total_duration_seconds") or 0),
+                coverage=_period_key_coverage(day_index, period, granularity),
                 videos=[_video_from_row(video_row) for video_row in period_videos[:3]],
                 top_topics=period_top_topics,
                 summary=row.get("summary") or "",
@@ -2916,9 +3000,9 @@ def get_durable_archive_intelligence(
         )
 
     period_options = list_period_options(db).periods
-    selected_period = next((option for option in period_options if option.kind == "month"), None)
-    if selected_period is None and period_options:
-        selected_period = period_options[0]
+    selected_period = None
+    if not custom_range:
+        selected_period = next((option for option in period_options if option.kind == granularity), None)
 
     return attach_archive_facets(
         ArchiveIntelligenceResponse(

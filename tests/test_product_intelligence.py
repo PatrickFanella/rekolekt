@@ -11,7 +11,9 @@ def test_topic_timeline_counts_mentions_episodes_and_cited_evidence(monkeypatch)
         id=uuid4(),
         youtube_id="abcdefghijk",
         title="Episode",
-        uploaded_at=datetime(2026, 5, 12, tzinfo=timezone.utc),
+        # Uploaded in June; the stream happened in May.
+        uploaded_at=datetime(2026, 6, 2, tzinfo=timezone.utc),
+        broadcast_date=date(2026, 5, 31),
     )
     moments = [
         SearchMoment(id=index, video_id=video.id, start_ms=index * 1000, end_ms=index * 1000 + 500, snippet="rent")
@@ -19,7 +21,9 @@ def test_topic_timeline_counts_mentions_episodes_and_cited_evidence(monkeypatch)
     ]
     monkeypatch.setattr(
         "app.archive.product_intelligence.crud.get_grouped_search",
-        lambda *_args, **_kwargs: SimpleNamespace(groups=[SimpleNamespace(video=video, moments=moments)]),
+        lambda *_args, **_kwargs: SimpleNamespace(
+            groups=[SimpleNamespace(video=video, moments=moments)], total_moments=len(moments)
+        ),
     )
 
     result = build_topic_timeline(
@@ -68,3 +72,25 @@ def test_quoted_moments_are_ranked_aggregate_citations():
     result = quoted_moments(db, video_id=video_id)
     assert result.video_id == video_id
     assert result.items[0].quote_count == 3
+
+
+def test_topic_timeline_pages_past_the_first_result_page(monkeypatch):
+    from app.archive import product_intelligence
+
+    video = VideoInfo(id=uuid4(), youtube_id="abcdefghijk", broadcast_date=date(2026, 5, 3))
+    offsets = []
+
+    def fake_grouped(*_args, offset=0, limit=0, **_kwargs):
+        offsets.append(offset)
+        count = limit if len(offsets) < 3 else 1
+        moments = [
+            SearchMoment(id=offset + i, video_id=video.id, start_ms=i, end_ms=i + 1, snippet="x") for i in range(count)
+        ]
+        return SimpleNamespace(groups=[SimpleNamespace(video=video, moments=moments)], total_moments=count)
+
+    monkeypatch.setattr(product_intelligence.crud, "get_grouped_search", fake_grouped)
+    result = build_topic_timeline(object(), slug="x", granularity="week", date_from=None, date_to=None)
+
+    assert offsets == [0, 500, 1000]
+    assert result.buckets[0].mention_count == 1001
+    assert result.buckets[0].label == "Week of 2026-04-27"

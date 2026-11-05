@@ -23,7 +23,9 @@ def test_mention_map_uses_complete_matches_and_effective_video_date(monkeypatch)
     recent_video = VideoInfo(
         id=recent_id,
         youtube_id="new-video-1",
-        uploaded_at=now - timedelta(days=89),
+        # Uploaded long after the broadcast: mentions are dated by the broadcast.
+        uploaded_at=now + timedelta(days=30),
+        broadcast_date=(now - timedelta(days=88)).date(),
         created_at=datetime(2019, 1, 1, tzinfo=timezone.utc),
     )
 

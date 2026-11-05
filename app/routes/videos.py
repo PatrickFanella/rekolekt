@@ -507,8 +507,9 @@ def list_videos(
         None, ge=0, deprecated=True, description="Deprecated offset pagination; use cursor instead"
     ),
     q: str | None = Query(None, description="Search query for title, youtube ID, or channel name"),
-    date_field: Literal["uploaded_at", "created_at", "updated_at"] = Query(
-        "uploaded_at", description="Date field used for date filtering"
+    date_field: Literal["broadcast_date", "uploaded_at", "created_at", "updated_at"] = Query(
+        "broadcast_date",
+        description="Date field used for date filtering; broadcast_date is when the stream happened",
     ),
     date_from: str | None = Query(None, description="Inclusive YYYY-MM-DD date lower bound"),
     date_to: str | None = Query(None, description="Inclusive YYYY-MM-DD date upper bound"),

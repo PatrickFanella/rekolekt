@@ -1586,6 +1586,17 @@
       },
       "ArchivePeriodIntelligence": {
         "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Day coverage for the period, by broadcast date"
+          },
           "evidence": {
             "description": "Citations supporting the summary",
             "items": {
@@ -1648,6 +1659,17 @@
       },
       "ArchivePeriodOption": {
         "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Day coverage for the period, by broadcast date"
+          },
           "date_from": {
             "description": "Inclusive start date",
             "format": "date",
@@ -2372,6 +2394,47 @@
       },
       "ArchiveVideoMetadataAdminVideo": {
         "properties": {
+          "broadcast_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Local date of the broadcast, parsed from the title or approximated by the upload day",
+            "title": "Broadcast Date"
+          },
+          "broadcast_date_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title",
+                  "upload_date",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where broadcast_date came from; upload_date means an approximation",
+            "title": "Broadcast Date Source"
+          },
+          "broadcast_kind": {
+            "default": "vod",
+            "description": "vod (full broadcast), no_stream (placeholder for a day off) or extra (clip, interview)",
+            "enum": [
+              "vod",
+              "no_stream",
+              "extra"
+            ],
+            "title": "Broadcast Kind",
+            "type": "string"
+          },
           "caption_ingest_state": {
             "anyOf": [
               {
@@ -2539,7 +2602,7 @@
                 "type": "null"
               }
             ],
-            "description": "YouTube upload or stream publish time",
+            "description": "YouTube upload time (not the broadcast date)",
             "title": "Uploaded At"
           },
           "youtube_id": {
@@ -4900,6 +4963,48 @@
         "title": "PaginatedVideos",
         "type": "object"
       },
+      "PeriodCoverage": {
+        "description": "How completely the archive covers the days in a period.\n\nEvery counted day is exactly one of: covered by a full VOD, a confirmed day\noff (a \"no stream\" placeholder upload), or unknown (nothing archived).",
+        "properties": {
+          "days": {
+            "description": "Days in the period that have elapsed and fall within the archive's span",
+            "title": "Days",
+            "type": "integer"
+          },
+          "missing_dates": {
+            "description": "Unknown days, oldest first, capped at 62 entries",
+            "items": {
+              "format": "date",
+              "type": "string"
+            },
+            "title": "Missing Dates",
+            "type": "array"
+          },
+          "no_stream_days": {
+            "description": "Days confirmed as no-stream days, with no archived broadcast",
+            "title": "No Stream Days",
+            "type": "integer"
+          },
+          "unknown_days": {
+            "description": "Days with neither an archived broadcast nor a no-stream notice",
+            "title": "Unknown Days",
+            "type": "integer"
+          },
+          "vod_days": {
+            "description": "Days with at least one archived full broadcast",
+            "title": "Vod Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "days",
+          "vod_days",
+          "no_stream_days",
+          "unknown_days"
+        ],
+        "title": "PeriodCoverage",
+        "type": "object"
+      },
       "Post": {
         "properties": {
           "author_id": {
@@ -5674,6 +5779,19 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "broadcast_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Local date of the broadcast",
+            "title": "Broadcast Date"
+          },
           "channel_name": {
             "anyOf": [
               {
@@ -5803,6 +5921,19 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "broadcast_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Local date of the broadcast",
+            "title": "Broadcast Date"
+          },
           "channel_name": {
             "anyOf": [
               {
@@ -6279,6 +6410,17 @@
       },
       "TimelineBucket": {
         "properties": {
+          "coverage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodCoverage"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Day coverage for the bucket, by broadcast date"
+          },
           "label": {
             "description": "Human-readable bucket label",
             "title": "Label",
@@ -6766,6 +6908,47 @@
           "youtube_id": "dQw4w9WgXcQ"
         },
         "properties": {
+          "broadcast_date": {
+            "anyOf": [
+              {
+                "format": "date",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Local date of the broadcast, parsed from the title or approximated by the upload day",
+            "title": "Broadcast Date"
+          },
+          "broadcast_date_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "title",
+                  "upload_date",
+                  "manual"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Where broadcast_date came from; upload_date means an approximation",
+            "title": "Broadcast Date Source"
+          },
+          "broadcast_kind": {
+            "default": "vod",
+            "description": "vod (full broadcast), no_stream (placeholder for a day off) or extra (clip, interview)",
+            "enum": [
+              "vod",
+              "no_stream",
+              "extra"
+            ],
+            "title": "Broadcast Kind",
+            "type": "string"
+          },
           "caption_ingest_state": {
             "anyOf": [
               {
@@ -6933,7 +7116,7 @@
                 "type": "null"
               }
             ],
-            "description": "YouTube upload or stream publish time",
+            "description": "YouTube upload time (not the broadcast date)",
             "title": "Uploaded At"
           },
           "youtube_id": {
@@ -14332,14 +14515,15 @@
             }
           },
           {
-            "description": "Date field used for date filtering",
+            "description": "Date field used for date filtering; broadcast_date is when the stream happened",
             "in": "query",
             "name": "date_field",
             "required": false,
             "schema": {
-              "default": "uploaded_at",
-              "description": "Date field used for date filtering",
+              "default": "broadcast_date",
+              "description": "Date field used for date filtering; broadcast_date is when the stream happened",
               "enum": [
+                "broadcast_date",
                 "uploaded_at",
                 "created_at",
                 "updated_at"

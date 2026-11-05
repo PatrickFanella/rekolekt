@@ -398,7 +398,7 @@ def test_seed_named_periods_corrects_current_curated_windows(monkeypatch):
     assert by_slug["russia-ukraine-invasion-fallout"]["kind"] == "fallout"
     assert str(by_slug["russia-ukraine-invasion-fallout"]["date_to"]) == "2022-12-31"
     assert by_slug["2026-midterms-leadup"]["kind"] == "leadup"
-    assert str(by_slug["2026-midterms-leadup"]["date_from"]) == "2026-11-03"
+    assert str(by_slug["2026-midterms-leadup"]["date_from"]) == "2026-10-01"
     assert str(by_slug["2026-midterms-leadup"]["date_to"]) == "2026-11-03"
     assert "2024-august-21" not in by_slug
     assert "2025-august-21" not in by_slug
@@ -477,7 +477,10 @@ def test_refresh_named_period_stats_includes_metadata_in_public_payloads():
                         }
                     ]
                 )
-            if "FROM videos v" in sql_text and "v.uploaded_at >= :start_dt" in sql_text:
+            if (
+                "FROM videos v" in sql_text
+                and "(v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :start_dt" in sql_text
+            ):
                 return _FakeResult(
                     rows=[
                         {
@@ -489,6 +492,7 @@ def test_refresh_named_period_stats_includes_metadata_in_public_payloads():
                             "caption_ingest_state": "completed",
                             "diarization_state": None,
                             "uploaded_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
+                            "broadcast_date": date(2026, 5, 9),
                             "created_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
                             "updated_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
                             "channel_name": "HasanAbi",
@@ -502,7 +506,7 @@ def test_refresh_named_period_stats_includes_metadata_in_public_payloads():
                 )
             if (
                 "FROM archive_topic_mentions m" in sql_text
-                and "COALESCE(m.occurred_at, v.uploaded_at, v.created_at) >= :start_dt" in sql_text
+                and "(v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :start_dt" in sql_text
             ):
                 return _FakeResult(
                     rows=[
@@ -522,6 +526,7 @@ def test_refresh_named_period_stats_includes_metadata_in_public_payloads():
                             "caption_ingest_state": "completed",
                             "diarization_state": None,
                             "uploaded_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
+                            "broadcast_date": date(2026, 5, 9),
                             "created_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
                             "updated_at": datetime(2026, 5, 10, tzinfo=timezone.utc),
                             "channel_name": "HasanAbi",
@@ -619,12 +624,12 @@ def test_refresh_named_period_stats_uses_recurring_month_day_filter():
                 )
             if "FROM archive_topics t" in sql_text and "LEFT JOIN archive_topic_aliases" in sql_text:
                 return _FakeResult(rows=[])
-            if "FROM videos v" in sql_text and "EXTRACT(MONTH FROM v.uploaded_at)" in sql_text:
+            if "FROM videos v" in sql_text and "EXTRACT(MONTH FROM v.broadcast_date)" in sql_text:
                 assert params == {"recurring_month": 8, "recurring_day": 21}
                 return _FakeResult(rows=[])
             if (
                 "FROM archive_topic_mentions m" in sql_text
-                and "EXTRACT(MONTH FROM COALESCE(m.occurred_at, v.uploaded_at, v.created_at))" in sql_text
+                and "EXTRACT(MONTH FROM (v.broadcast_date::timestamp AT TIME ZONE 'UTC'))" in sql_text
             ):
                 assert params == {"recurring_month": 8, "recurring_day": 21}
                 return _FakeResult(rows=[])
@@ -639,8 +644,8 @@ def test_refresh_named_period_stats_uses_recurring_month_day_filter():
 
     assert result["rows"] == 1
     assert db.inserted_periods[0][0]["video_count"] == 0
-    assert any("EXTRACT(MONTH FROM v.uploaded_at)" in sql for sql, _ in db.calls)
-    assert not any("v.uploaded_at >= :start_dt" in sql for sql, _ in db.calls)
+    assert any("EXTRACT(MONTH FROM v.broadcast_date)" in sql for sql, _ in db.calls)
+    assert not any("(v.broadcast_date::timestamp AT TIME ZONE 'UTC') >= :start_dt" in sql for sql, _ in db.calls)
 
 
 def test_refresh_topic_mentions_uses_youtube_caption_segments():
@@ -787,7 +792,7 @@ def test_refresh_topic_mentions_partial_scan_never_deletes_staged_absences():
     assert not any("DELETE FROM archive_topic_mentions m" in sql for sql, _ in db.calls)
 
 
-def test_refresh_topic_period_stats_uses_created_at_when_uploaded_at_missing():
+def test_refresh_topic_period_stats_dates_mentions_by_broadcast_date():
     topic_id = uuid.uuid4()
     video_id = uuid.uuid4()
 
@@ -818,7 +823,7 @@ def test_refresh_topic_period_stats_uses_created_at_when_uploaded_at_missing():
                 return _FakeResult()
             if (
                 "FROM archive_topic_mentions m" in sql_text
-                and "COALESCE(m.occurred_at, v.uploaded_at, v.created_at) AS when_at" in sql_text
+                and "(v.broadcast_date::timestamp AT TIME ZONE 'UTC') AS when_at" in sql_text
             ):
                 return _FakeResult(
                     rows=[
