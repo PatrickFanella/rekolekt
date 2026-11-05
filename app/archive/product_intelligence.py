@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date
 from typing import Literal
 
 from sqlalchemy import text
@@ -18,13 +18,14 @@ from ..schemas import (
     TopicTimelineBucket,
     TopicTimelineResponse,
 )
+from .intelligence_queries.periods import bucket_period_and_label
+
+TOPIC_TIMELINE_PAGE_SIZE = 500
+TOPIC_TIMELINE_MAX_PAGES = 20
 
 
-def _bucket_key(value: datetime, granularity: Literal["week", "month"]) -> tuple[str, str]:
-    if granularity == "week":
-        iso = value.isocalendar()
-        return f"{iso.year}-W{iso.week:02d}", f"Week {iso.week}, {iso.year}"
-    return value.strftime("%Y-%m"), value.strftime("%B %Y")
+def _bucket_key(value: date, granularity: Literal["week", "month"]) -> tuple[str, str]:
+    return bucket_period_and_label(value, granularity)
 
 
 def build_topic_timeline(
@@ -35,31 +36,47 @@ def build_topic_timeline(
     date_from: date | None,
     date_to: date | None,
 ) -> TopicTimelineResponse:
+    """Bucket a topic's mentions by broadcast date across every matching video.
+
+    Pages through grouped search so counts are not limited to the first page
+    of results, bounded at TOPIC_TIMELINE_MAX_PAGES pages.
+    """
+
     query = slug.replace("-", " ").strip()
     filters = {
         **({"date_from": date_from.isoformat()} if date_from else {}),
         **({"date_to": date_to.isoformat()} if date_to else {}),
     }
-    grouped = crud.get_grouped_search(db, q=query, source="best", limit=200, filters=filters)
     buckets: dict[str, dict] = defaultdict(lambda: {"label": "", "moments": [], "videos": set()})
-    for group in grouped.groups:
-        uploaded_at = group.video.uploaded_at
-        if uploaded_at is None:
-            continue
-        key, label = _bucket_key(uploaded_at, granularity)
-        bucket = buckets[key]
-        bucket["label"] = label
-        bucket["videos"].add(str(group.video.id))
-        for moment in group.moments:
-            bucket["moments"].append(
-                ArchiveEvidenceMoment(
-                    video=group.video,
-                    start_ms=moment.start_ms,
-                    end_ms=moment.end_ms,
-                    snippet=moment.snippet,
-                    topic=query,
+    for page_number in range(TOPIC_TIMELINE_MAX_PAGES):
+        grouped = crud.get_grouped_search(
+            db,
+            q=query,
+            source="best",
+            limit=TOPIC_TIMELINE_PAGE_SIZE,
+            offset=page_number * TOPIC_TIMELINE_PAGE_SIZE,
+            filters=filters,
+        )
+        for group in grouped.groups:
+            broadcast_date = group.video.broadcast_date
+            if broadcast_date is None:
+                continue
+            key, label = _bucket_key(broadcast_date, granularity)
+            bucket = buckets[key]
+            bucket["label"] = label
+            bucket["videos"].add(str(group.video.id))
+            for moment in group.moments:
+                bucket["moments"].append(
+                    ArchiveEvidenceMoment(
+                        video=group.video,
+                        start_ms=moment.start_ms,
+                        end_ms=moment.end_ms,
+                        snippet=moment.snippet,
+                        topic=query,
+                    )
                 )
-            )
+        if grouped.total_moments < TOPIC_TIMELINE_PAGE_SIZE:
+            break
     return TopicTimelineResponse(
         topic=query,
         granularity=granularity,

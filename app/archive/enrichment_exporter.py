@@ -35,6 +35,9 @@ def _candidate_videos(
                     v.title,
                     v.duration_seconds,
                     v.uploaded_at,
+                    v.broadcast_date,
+                    v.broadcast_date_source,
+                    v.broadcast_kind,
                     v.category
                 FROM videos AS v
                 WHERE COALESCE(v.duration_seconds, 0) >= :minimum_duration_seconds

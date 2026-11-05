@@ -9,6 +9,7 @@ from unittest.mock import call, patch
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.archive.broadcast_dates import broadcast_columns
 from app.archive.video_metadata_repository import create_person, create_tag, set_video_metadata
 from app.csrf import csrf_token
 from app.routes import archive as archive_routes
@@ -44,10 +45,17 @@ def _create_completed_video(
     )
     db_session.execute(
         text("""
-            INSERT INTO videos (id, job_id, youtube_id, idx, title, duration_seconds, state, uploaded_at, created_at, updated_at)
-            VALUES (:id, :job_id, :youtube_id, 0, :title, :duration_seconds, 'completed', :uploaded_at, :uploaded_at, :uploaded_at)
+            INSERT INTO videos (
+                id, job_id, youtube_id, idx, title, duration_seconds, state, uploaded_at, created_at, updated_at,
+                broadcast_date, broadcast_date_source, broadcast_kind
+            )
+            VALUES (
+                :id, :job_id, :youtube_id, 0, :title, :duration_seconds, 'completed', :uploaded_at, :uploaded_at,
+                :uploaded_at, :broadcast_date, :broadcast_date_source, :broadcast_kind
+            )
             """),
         {
+            **broadcast_columns(title, uploaded_at),
             "id": str(video_id),
             "job_id": str(job_id),
             "youtube_id": youtube_id,
@@ -498,6 +506,44 @@ class TestArchiveRoutes:
             }
         ]
         assert data["tags"] == [{"slug": "chadvice", "label": "Chadvice", "kind": "category", "description": None}]
+
+    def test_archive_timeline_uses_broadcast_dates_and_reports_coverage(self, client: TestClient, db_session):
+        # Uploaded in March, broadcast in February: it belongs to February.
+        vod = _create_completed_video(
+            db_session,
+            youtube_id="bcast1",
+            title="HasanAbi February 26, 2026 – Topic",
+            uploaded_at=datetime(2026, 3, 2, tzinfo=timezone.utc),
+            duration_seconds=600,
+        )
+        placeholder = _create_completed_video(
+            db_session,
+            youtube_id="bcast2",
+            title="HasanAbi February 27, 2026 – NO STREAM TODAY",
+            uploaded_at=datetime(2026, 2, 28, tzinfo=timezone.utc),
+            duration_seconds=10,
+        )
+        for vid in (vod, placeholder):
+            db_session.execute(
+                text(
+                    "INSERT INTO segments (video_id, start_ms, end_ms, text, speaker_label) "
+                    "VALUES (:vid, 0, 1000, 'words', NULL)"
+                ),
+                {"vid": str(vid)},
+            )
+        db_session.commit()
+
+        response = client.get("/archive/timeline?granularity=month&date_from=2026-02-01&date_to=2026-03-31")
+        assert response.status_code == 200
+        buckets = response.json()["buckets"]
+        assert [bucket["period"] for bucket in buckets] == ["2026-02"]
+        february = buckets[0]
+        # The placeholder is a day off, not a video.
+        assert february["video_count"] == 1
+        assert february["total_duration_seconds"] == 600
+        assert [video["broadcast_date"] for video in february["videos"]] == ["2026-02-26"]
+        assert february["coverage"]["vod_days"] == 1
+        assert february["coverage"]["no_stream_days"] == 1
 
     def test_archive_timeline(self, client: TestClient, db_session):
         first_video = _create_completed_video(

@@ -91,10 +91,10 @@ class SearchRepository:
 
         if needs_video_join:
             if filters.get("date_from"):
-                where_clauses.append("v.uploaded_at >= :date_from")
+                where_clauses.append("v.broadcast_date >= CAST(:date_from AS date)")
                 params["date_from"] = filters["date_from"]
             if filters.get("date_to"):
-                where_clauses.append("v.uploaded_at <= :date_to")
+                where_clauses.append("v.broadcast_date <= CAST(:date_to AS date)")
                 params["date_to"] = filters["date_to"]
             if filters.get("min_duration") is not None:
                 where_clauses.append("v.duration_seconds >= :min_duration")
@@ -121,9 +121,9 @@ class SearchRepository:
 
         # Build ORDER BY clause
         if sort_by == "date_desc":
-            order_by = "v.uploaded_at DESC NULLS LAST, s.start_ms ASC"
+            order_by = "v.broadcast_date DESC NULLS LAST, s.start_ms ASC"
         elif sort_by == "date_asc":
-            order_by = "v.uploaded_at ASC NULLS LAST, s.start_ms ASC"
+            order_by = "v.broadcast_date ASC NULLS LAST, s.start_ms ASC"
         elif sort_by == "duration_desc":
             order_by = "v.duration_seconds DESC NULLS LAST, s.start_ms ASC"
         elif sort_by == "duration_asc":
@@ -153,13 +153,13 @@ class SearchRepository:
         result_order = order_by.replace("v.", "").replace("s.", "")
         sql = f"""
             WITH native_text_hits AS (
-                SELECT {select_fields}, v.uploaded_at, v.duration_seconds
+                SELECT {select_fields}, v.uploaded_at, v.broadcast_date, v.duration_seconds
                 FROM {from_clause}
                 WHERE {" AND ".join(text_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
             ), native_title_hits AS (
-                SELECT {select_fields}, v.uploaded_at, v.duration_seconds
+                SELECT {select_fields}, v.uploaded_at, v.broadcast_date, v.duration_seconds
                 FROM {from_clause}
                 WHERE {" AND ".join(title_where)}
                 ORDER BY {order_by}
@@ -222,12 +222,12 @@ class SearchRepository:
 
         if needs_video_join:
             if filters.get("date_from"):
-                text_where.append("v.uploaded_at >= :date_from")
-                title_where.append("v.uploaded_at >= :date_from")
+                text_where.append("v.broadcast_date >= CAST(:date_from AS date)")
+                title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
                 params["date_from"] = filters["date_from"]
             if filters.get("date_to"):
-                text_where.append("v.uploaded_at <= :date_to")
-                title_where.append("v.uploaded_at <= :date_to")
+                text_where.append("v.broadcast_date <= CAST(:date_to AS date)")
+                title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
                 params["date_to"] = filters["date_to"]
             if filters.get("min_duration") is not None:
                 text_where.append("v.duration_seconds >= :min_duration")
@@ -252,9 +252,9 @@ class SearchRepository:
 
         # Build ORDER BY clause
         if sort_by == "date_desc":
-            order_by = "uploaded_at DESC NULLS LAST, start_ms ASC"
+            order_by = "broadcast_date DESC NULLS LAST, start_ms ASC"
         elif sort_by == "date_asc":
-            order_by = "uploaded_at ASC NULLS LAST, start_ms ASC"
+            order_by = "broadcast_date ASC NULLS LAST, start_ms ASC"
         elif sort_by == "duration_desc":
             order_by = "duration_seconds DESC NULLS LAST, start_ms ASC"
         elif sort_by == "duration_asc":
@@ -273,6 +273,7 @@ class SearchRepository:
                     {text_rank} AS rank,
                     0 AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -292,6 +293,7 @@ class SearchRepository:
                     0.0 AS rank,
                     1 AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -312,7 +314,7 @@ class SearchRepository:
                 LIMIT :branch_limit
             )
             SELECT id, video_id, start_ms, end_ms, snippet, rank, title_match,
-                   uploaded_at, duration_seconds, video_title, channel_name
+                   uploaded_at, broadcast_date, duration_seconds, video_title, channel_name
             FROM (
                 SELECT * FROM text_hits
                 UNION ALL
@@ -361,16 +363,16 @@ class SearchRepository:
             params["vid"] = str(video_id)
 
         if filters.get("date_from"):
-            native_where.append("v.uploaded_at >= :date_from")
-            native_title_where.append("v.uploaded_at >= :date_from")
-            youtube_where.append("v.uploaded_at >= :date_from")
-            youtube_title_where.append("v.uploaded_at >= :date_from")
+            native_where.append("v.broadcast_date >= CAST(:date_from AS date)")
+            native_title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
+            youtube_where.append("v.broadcast_date >= CAST(:date_from AS date)")
+            youtube_title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
             params["date_from"] = filters["date_from"]
         if filters.get("date_to"):
-            native_where.append("v.uploaded_at <= :date_to")
-            native_title_where.append("v.uploaded_at <= :date_to")
-            youtube_where.append("v.uploaded_at <= :date_to")
-            youtube_title_where.append("v.uploaded_at <= :date_to")
+            native_where.append("v.broadcast_date <= CAST(:date_to AS date)")
+            native_title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
+            youtube_where.append("v.broadcast_date <= CAST(:date_to AS date)")
+            youtube_title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
             params["date_to"] = filters["date_to"]
         if filters.get("min_duration") is not None:
             native_where.append("v.duration_seconds >= :min_duration")
@@ -415,9 +417,9 @@ class SearchRepository:
         youtube_title_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
 
         if sort_by == "date_desc":
-            order_by = "uploaded_at DESC NULLS LAST, start_ms ASC"
+            order_by = "broadcast_date DESC NULLS LAST, start_ms ASC"
         elif sort_by == "date_asc":
-            order_by = "uploaded_at ASC NULLS LAST, start_ms ASC"
+            order_by = "broadcast_date ASC NULLS LAST, start_ms ASC"
         elif sort_by == "duration_desc":
             order_by = "duration_seconds DESC NULLS LAST, start_ms ASC"
         elif sort_by == "duration_asc":
@@ -440,6 +442,7 @@ class SearchRepository:
                     {native_rank} AS rank,
                     CASE WHEN {title_match} THEN 1 ELSE 0 END AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -459,6 +462,7 @@ class SearchRepository:
                     0.0 AS rank,
                     1 AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -487,6 +491,7 @@ class SearchRepository:
                     {youtube_rank} AS rank,
                     CASE WHEN {title_match} OR v.youtube_id ILIKE :title_q THEN 1 ELSE 0 END AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -507,6 +512,7 @@ class SearchRepository:
                     0.0 AS rank,
                     1 AS title_match,
                     v.uploaded_at,
+                    v.broadcast_date,
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
@@ -527,7 +533,7 @@ class SearchRepository:
                 LIMIT :branch_limit
             )
             SELECT id, video_id, start_ms, end_ms, snippet, source, rank, title_match,
-                   uploaded_at, duration_seconds, video_title, channel_name
+                   uploaded_at, broadcast_date, duration_seconds, video_title, channel_name
             FROM (
                 SELECT * FROM native_text_hits
                 UNION ALL

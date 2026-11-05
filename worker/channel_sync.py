@@ -8,6 +8,7 @@ from typing import Any, Callable, Iterable, Protocol
 
 from sqlalchemy import text
 
+from app.archive.broadcast_dates import broadcast_columns
 from app.logging_config import get_logger
 from worker.youtube.service import get_youtube_service
 
@@ -61,9 +62,12 @@ class SqlChannelSyncRepository:
                     RETURNING id
                 )
                 INSERT INTO videos (
-                    job_id, youtube_id, idx, title, duration_seconds, channel_name
+                    job_id, youtube_id, idx, title, duration_seconds, channel_name,
+                    broadcast_date, broadcast_date_source, broadcast_kind
                 )
-                SELECT id, :youtube_id, 0, :title, :duration_seconds, :channel_name
+                SELECT
+                    id, :youtube_id, 0, :title, :duration_seconds, :channel_name,
+                    :broadcast_date, :broadcast_date_source, :broadcast_kind
                 FROM new_job
                 ON CONFLICT (job_id, youtube_id) DO NOTHING
                 RETURNING id
@@ -75,6 +79,7 @@ class SqlChannelSyncRepository:
                 "duration_seconds": video.duration_seconds,
                 "channel_name": video.channel_name,
                 "meta": json.dumps({"created_by": "channel_sync", "staged": True}),
+                **broadcast_columns(video.title, None),
             },
         ).first()
         return row is not None

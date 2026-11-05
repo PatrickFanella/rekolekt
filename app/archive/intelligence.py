@@ -138,6 +138,7 @@ def _recent_evidence_for_videos(db, videos: list[VideoInfo], limit: int = 24) ->
                     SELECT
                         v.id AS video_id, v.youtube_id, v.title, v.duration_seconds, v.state,
                         v.caption_ingest_state, v.diarization_state, v.uploaded_at, v.created_at,
+                        v.broadcast_date, v.broadcast_date_source, v.broadcast_kind,
                         v.updated_at, v.channel_name, v.language, v.category,
                         EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
                         EXISTS (SELECT 1 FROM youtube_transcripts yt WHERE yt.video_id = v.id) AS has_youtube_transcript,
@@ -151,6 +152,7 @@ def _recent_evidence_for_videos(db, videos: list[VideoInfo], limit: int = 24) ->
                     SELECT
                         v.id AS video_id, v.youtube_id, v.title, v.duration_seconds, v.state,
                         v.caption_ingest_state, v.diarization_state, v.uploaded_at, v.created_at,
+                        v.broadcast_date, v.broadcast_date_source, v.broadcast_kind,
                         v.updated_at, v.channel_name, v.language, v.category,
                         EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
                         TRUE AS has_youtube_transcript,

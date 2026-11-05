@@ -35,7 +35,8 @@ class FakeDB:
 def test_native_branch_search_preserves_or_query_results(db_session, mode, sort, filtered):
     for sql in [
         "CREATE TEMP TABLE videos (id text, title text, uploaded_at timestamptz, duration_seconds int, "
-        "channel_name text, category text, language text) ON COMMIT DROP",
+        "channel_name text, category text, language text"
+        ", broadcast_date date GENERATED ALWAYS AS ((uploaded_at AT TIME ZONE 'UTC')::date) STORED) ON COMMIT DROP",
         "CREATE TEMP TABLE segments (id bigint, video_id text, start_ms int, end_ms int, text text, "
         "text_tsv tsvector, speaker_label text) ON COMMIT DROP",
         "INSERT INTO videos VALUES ('v1','needle','2026-01-01',100,'one','news','en'), "
@@ -56,8 +57,8 @@ def test_native_branch_search_preserves_or_query_results(db_session, mode, sort,
     match, headline, rank, title_match = _match_expressions("s", "needle", filters, params)
     order = {
         "relevance": "rank DESC, title_match DESC, s.start_ms ASC",
-        "date_desc": "v.uploaded_at DESC NULLS LAST, s.start_ms ASC",
-        "date_asc": "v.uploaded_at ASC NULLS LAST, s.start_ms ASC",
+        "date_desc": "v.broadcast_date DESC NULLS LAST, s.start_ms ASC",
+        "date_asc": "v.broadcast_date ASC NULLS LAST, s.start_ms ASC",
         "duration_desc": "v.duration_seconds DESC NULLS LAST, s.start_ms ASC",
         "duration_asc": "v.duration_seconds ASC NULLS LAST, s.start_ms ASC",
     }[sort]
@@ -98,7 +99,8 @@ def test_title_search_selects_earliest_segment_across_transcripts(db_session, me
     # Temporary relations keep this regression independent of the archive size.
     for sql in [
         "CREATE TEMP TABLE videos (id text, title text, youtube_id text, uploaded_at timestamptz, "
-        "duration_seconds int, channel_name text, category text, language text) ON COMMIT DROP",
+        "duration_seconds int, channel_name text, category text, language text"
+        ", broadcast_date date GENERATED ALWAYS AS ((uploaded_at AT TIME ZONE 'UTC')::date) STORED) ON COMMIT DROP",
         "CREATE TEMP TABLE segments (id bigint, video_id text, start_ms int, end_ms int, "
         "text text, text_tsv tsvector, speaker_label text) ON COMMIT DROP",
         "CREATE TEMP TABLE youtube_transcripts (id bigint, video_id text) ON COMMIT DROP",
@@ -163,7 +165,7 @@ def test_search_native_builds_expected_sql_and_params():
     sql = str(db.calls[0]["statement"])
     assert "FROM segments s JOIN videos v ON s.video_id = v.id" in sql
     assert "CASE WHEN s.text_tsv @@ websearch_to_tsquery('english', :q)" in sql
-    assert "ORDER BY v.uploaded_at DESC NULLS LAST, s.start_ms ASC" in sql
+    assert "ORDER BY v.broadcast_date DESC NULLS LAST, s.start_ms ASC" in sql
     assert db.calls[0]["params"]["title_q"] == "%hello world%"
     assert db.calls[0]["params"]["vid"] == "video-1"
     assert db.calls[0]["params"]["channel"] == "%Hasan%"

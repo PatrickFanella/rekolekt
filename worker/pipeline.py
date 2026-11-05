@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import text
 
 from app import crud
+from app.archive.broadcast_dates import broadcast_columns
 from app.logging_config import get_logger
 from app.settings import settings
 from worker.audio import chunk_audio, download_audio, ensure_wav_16k
@@ -333,8 +334,14 @@ def expand_channel_if_needed(conn):
                 uploaded_at = _metadata_uploaded_at(e)
                 conn.execute(
                     text("""
-                    INSERT INTO videos (job_id, youtube_id, idx, title, duration_seconds, uploaded_at, channel_name)
-                    VALUES (:j,:y,:idx,:title,:dur,:uploaded_at,:channel_name)
+                    INSERT INTO videos (
+                        job_id, youtube_id, idx, title, duration_seconds, uploaded_at, channel_name,
+                        broadcast_date, broadcast_date_source, broadcast_kind
+                    )
+                    VALUES (
+                        :j,:y,:idx,:title,:dur,:uploaded_at,:channel_name,
+                        :broadcast_date,:broadcast_date_source,:broadcast_kind
+                    )
                     ON CONFLICT (job_id, youtube_id) DO NOTHING
                 """),
                     {
@@ -345,6 +352,7 @@ def expand_channel_if_needed(conn):
                         "dur": duration,
                         "uploaded_at": uploaded_at,
                         "channel_name": video_channel_name,
+                        **broadcast_columns(title, uploaded_at),
                     },
                 )
 
@@ -454,8 +462,14 @@ def expand_single_if_needed(conn):
             )
             conn.execute(
                 text("""
-                INSERT INTO videos (job_id, youtube_id, idx, title, duration_seconds, uploaded_at, channel_name)
-                VALUES (:j,:y,:idx,:title,:dur,:uploaded_at,:channel_name)
+                INSERT INTO videos (
+                        job_id, youtube_id, idx, title, duration_seconds, uploaded_at, channel_name,
+                        broadcast_date, broadcast_date_source, broadcast_kind
+                    )
+                VALUES (
+                        :j,:y,:idx,:title,:dur,:uploaded_at,:channel_name,
+                        :broadcast_date,:broadcast_date_source,:broadcast_kind
+                    )
                 ON CONFLICT (job_id, youtube_id) DO NOTHING
             """),
                 {
@@ -466,6 +480,7 @@ def expand_single_if_needed(conn):
                     "dur": duration,
                     "uploaded_at": uploaded_at,
                     "channel_name": channel_name,
+                    **broadcast_columns(title, uploaded_at),
                 },
             )
             logger.info("Marking job as downloading after single expansion", extra={"job_id": str(job["id"])})
