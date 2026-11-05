@@ -384,7 +384,7 @@ verify_enrichment_canary_result() {
               AND s.categories = (t.metrics ->> 'categories')::integer
               AND s.categories >= 1) = 1 AS stored_counts_match,
           (SELECT count(*) FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id
-            WHERE c.status = 'candidate' AND c.source = 'automatic') >= 4 AS candidate_chapters,
+            WHERE c.status = 'candidate' AND c.source = 'automatic') >= 2 AS candidate_chapters,
           (SELECT min(c.start_ms) = 0 AND max(c.end_ms) = v.duration_seconds * 1000
               AND count(*) = count(DISTINCT c.start_ms)
               AND count(*) FILTER (WHERE c.start_ms = round(v.duration_seconds * 1000 / 2.0)) >= 1

@@ -81,7 +81,7 @@ EPISODE_ENRICHMENT_SCHEMA: dict[str, Any] = {
         },
         "chapters": {
             "type": "array",
-            "minItems": 2,
+            "minItems": 1,
             "maxItems": 40,
             "items": {
                 "type": "object",
@@ -136,7 +136,7 @@ class EpisodeEnrichmentCandidate(BaseModel):
     categories: list[EpisodeCategoryCandidate] = Field(max_length=3)
     # Each bounded provider response is capped at 40 chapters by the request
     # schema. The merged episode may legitimately contain more than that.
-    chapters: list[EpisodeChapterCandidate] = Field(min_length=2)
+    chapters: list[EpisodeChapterCandidate] = Field(min_length=1)
 
     @model_validator(mode="after")
     def validate_chapter_starts(self) -> EpisodeEnrichmentCandidate:
@@ -292,7 +292,8 @@ class OpenRouterEpisodeResult(BaseModel):
 
 
 def _target_chapter_count(duration_ms: int) -> int:
-    return max(6, min(30, round(duration_ms / (25 * 60 * 1000))))
+    # About one chapter per 25 minutes, matching the 15-35 minute guidance.
+    return max(1, min(30, round(duration_ms / (25 * 60 * 1000))))
 
 
 def build_openrouter_episode_request(
@@ -305,7 +306,8 @@ def build_openrouter_episode_request(
     target_count = _target_chapter_count(episode.duration_ms)
     response_schema = deepcopy(EPISODE_ENRICHMENT_SCHEMA)
     chapter_schema = response_schema["properties"]["chapters"]
-    chapter_schema["minItems"] = max(2, target_count - 2)
+    # A window that stays on one subject may need only one chapter.
+    chapter_schema["minItems"] = 1
     chapter_schema["maxItems"] = min(40, target_count + 2)
     evidence_schema = response_schema["properties"]["chapters"]["items"]["properties"]["evidence_block_indexes"][
         "items"

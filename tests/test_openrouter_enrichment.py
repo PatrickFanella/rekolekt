@@ -142,9 +142,9 @@ def test_build_openrouter_request_uses_identical_strict_controls():
     assert response_schema["name"] == "hasanara_episode_enrichment"
     assert response_schema["strict"] is True
     assert response_schema["schema"] is not EPISODE_ENRICHMENT_SCHEMA
-    assert response_schema["schema"]["properties"]["chapters"]["minItems"] == 4
-    assert response_schema["schema"]["properties"]["chapters"]["maxItems"] == 8
-    assert EPISODE_ENRICHMENT_SCHEMA["properties"]["chapters"]["minItems"] == 2
+    assert response_schema["schema"]["properties"]["chapters"]["minItems"] == 1
+    assert response_schema["schema"]["properties"]["chapters"]["maxItems"] == 3
+    assert EPISODE_ENRICHMENT_SCHEMA["properties"]["chapters"]["minItems"] == 1
     assert EPISODE_ENRICHMENT_SCHEMA["properties"]["chapters"]["maxItems"] == 40
     assert response_schema["schema"]["properties"]["categories"]["minItems"] == 0
     evidence_items = response_schema["schema"]["properties"]["chapters"]["items"]["properties"][
@@ -163,7 +163,7 @@ def test_build_openrouter_request_uses_identical_strict_controls():
         "require_parameters": True,
     }
     user = json.loads(body["messages"][1]["content"])
-    assert user["target_chapter_count"] == 6
+    assert user["target_chapter_count"] == 1
     assert user["category_taxonomy"]["politics"] == "Politics"
     assert "video-game" in user["category_definitions"]["gaming"]
     assert "explicitly named" in user["category_definitions"]["chadvice"]
@@ -811,3 +811,29 @@ def test_category_title_shortcut_matches_whole_words(title, slug, rejected):
     episode = _episode().model_copy(update={"title": title})
     reason = _category_rejection_reason({"slug": slug, "evidence_block_indexes": [0]}, episode)
     assert (reason is not None) is rejected
+
+
+@pytest.mark.parametrize("minutes,target,maximum", [(10, 1, 3), (45, 2, 4), (90, 4, 6), (900, 30, 32)])
+def test_chapter_count_follows_preferred_chapter_length(minutes, target, maximum):
+    episode = _episode().model_copy(update={"duration_ms": minutes * 60_000})
+    body = build_openrouter_episode_request(episode, model="model")
+    chapters = body["response_format"]["json_schema"]["schema"]["properties"]["chapters"]
+    assert json.loads(body["messages"][1]["content"])["target_chapter_count"] == target
+    assert (chapters["minItems"], chapters["maxItems"]) == (1, maximum)
+
+
+def test_single_chapter_window_is_valid():
+    candidate = EpisodeEnrichmentCandidate(
+        subjects=["Labor organizing"],
+        keywords=["union vote"],
+        categories=[],
+        chapters=[
+            {
+                "start_ms": 0,
+                "title": "Labor organizing",
+                "summary": "One long discussion.",
+                "evidence_block_indexes": [0],
+            }
+        ],
+    )
+    assert len(candidate.chapters) == 1
