@@ -15,6 +15,7 @@ from .enrichment_preflight import validate_enrichment_input
 from .enrichment_queue import OWNER_LOCK
 from .enrichment_runner import EpisodeInput
 from .labeling.normalization import slugify_label
+from .labeling.quality import assess_label_quality
 from .labeling.repository import (
     create_extraction_run,
     finish_extraction_run,
@@ -308,6 +309,8 @@ def persist_enrichment_candidates(
         "skipped_ungrounded_labels": 0,
         "skipped_duplicate_labels": 0,
         "skipped_refused_labels": 0,
+        "skipped_low_quality_labels": 0,
+        "held_for_review_labels": 0,
     }
     assigned_slugs: set[str] = set()
     assigned_ids: set[str] = set()
@@ -358,6 +361,12 @@ def persist_enrichment_candidates(
             # Use the repository's slug normalization, not display-string equality.
             metrics["skipped_duplicate_labels"] += 1
             continue
+        # The same quality policy as deterministic labels: drop noise, and keep
+        # "review" values as candidates that automatic approval leaves alone.
+        quality = assess_label_quality(label, source="llm")
+        if quality.action == "mark_noise":
+            metrics["skipped_low_quality_labels"] += 1
+            continue
         evidence = _grounded_label_evidence(label, episode, result)
         if not evidence:
             metrics["skipped_ungrounded_labels"] += 1
@@ -378,10 +387,11 @@ def persist_enrichment_candidates(
             evidence=evidence,
             source="llm",
             run_id=run_id,
-            component_scores={"llm_grounded": 1.0},
+            component_scores={"llm_grounded": 1.0, **({"quality_review": 1.0} if quality.action == "review" else {})},
         )
         metrics["labels"] += 1
         metrics["assignments"] += 1
+        metrics["held_for_review_labels"] += quality.action == "review"
         assigned_ids.add(label_id)
         assigned_slugs.add(slug)
     return metrics

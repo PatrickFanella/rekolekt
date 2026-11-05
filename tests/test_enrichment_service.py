@@ -277,6 +277,8 @@ def test_persist_enrichment_writes_review_candidates_with_grounded_labels():
         "skipped_ungrounded_labels": 1,
         "skipped_duplicate_labels": 0,
         "skipped_refused_labels": 0,
+        "skipped_low_quality_labels": 0,
+        "held_for_review_labels": 4,
     }
 
 
@@ -487,3 +489,71 @@ def test_enrich_video_rejects_invalid_results_before_persistence(overlap_violati
     assert finished[0]["metrics"]["prompt_version"] == "archive-episode-enrichment-v7"
     assert [call[0] for call in db.calls].count("ROLLBACK") == 1
     assert [call[0] for call in db.calls].count("COMMIT") == 2
+
+
+def test_persist_enrichment_drops_noise_labels_and_holds_review_labels():
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_200_000,
+        blocks=[
+            {
+                "block_index": 0,
+                "start_ms": 0,
+                "end_ms": 600_000,
+                "text": "Chat, the stream: Zohran Mamdani and the union vote.",
+            },
+            {
+                "block_index": 1,
+                "start_ms": 600_000,
+                "end_ms": 1_200_000,
+                "text": "Chat and the stream: more on the union vote.",
+            },
+        ],
+    )
+    result = OpenRouterEpisodeResult(
+        video_id="video-1",
+        model="deepseek/deepseek-v4-pro",
+        provider="provider",
+        prompt_version="prompt-v1",
+        candidate=EpisodeEnrichmentCandidate(
+            subjects=["Zohran Mamdani", "chat"],
+            keywords=["union vote", "the stream"],
+            categories=[{"slug": "politics", "evidence_block_indexes": [0, 1]}],
+            chapters=[
+                {
+                    "start_ms": 0,
+                    "title": "Mamdani and the union vote",
+                    "summary": "A union vote.",
+                    "evidence_block_indexes": [0],
+                },
+                {
+                    "start_ms": 600_000,
+                    "title": "More on the union vote",
+                    "summary": "The union vote.",
+                    "evidence_block_indexes": [1],
+                },
+            ],
+        ),
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost_usd=0.01,
+        elapsed_seconds=1.0,
+    )
+    assignments = []
+    metrics = persist_enrichment_candidates(
+        _Db(),
+        episode,
+        result,
+        run_id="run-1",
+        dependencies=EnrichmentPersistenceDependencies(
+            upsert_label=lambda _db, **kwargs: kwargs["label"],
+            insert_assignment=lambda _db, **kwargs: assignments.append(kwargs),
+        ),
+    )
+    by_label = {item["label_id"]: item for item in assignments}
+    assert set(by_label) == {"Politics", "Zohran Mamdani", "union vote"}
+    assert "quality_review" not in by_label["Zohran Mamdani"]["component_scores"]
+    assert by_label["union vote"]["component_scores"]["quality_review"] == 1.0
+    assert all(item["status"] == "candidate" for item in assignments)
+    assert metrics["skipped_low_quality_labels"] == 2
+    assert metrics["held_for_review_labels"] == 1

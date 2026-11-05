@@ -170,6 +170,37 @@ def test_approval_preserves_hidden_topic_assignments(cohort):
     )
 
 
+def test_approval_leaves_quality_review_labels_unapproved(cohort):
+    db, make = cohort
+    ids = make()
+    held = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO archive_labels(id,slug,label,kind,source) VALUES (:id,:slug,'union vote','topic','automatic')"
+        ),
+        {"id": held, "slug": uuid.uuid4().hex},
+    )
+    db.execute(
+        text("""INSERT INTO archive_label_assignments(video_id,label_id,run_id,source,status,publish_tier,unit_type,
+                assignment_key,component_scores)
+            VALUES (:video,:label,:run,'llm','candidate','bronze','vod',gen_random_uuid()::text,
+                jsonb_build_object('llm_grounded',1.0,'quality_review',1.0))"""),
+        {**ids, "label": held},
+    )
+    db.execute(
+        text("UPDATE archive_extraction_runs SET metrics=jsonb_set(metrics,'{assignments}','2') WHERE id=:run"), ids
+    )
+    result = approve_run(db, ids["run"])
+    assert result["assignments"] == 1
+    assert result["held_for_review_assignments"] == 1
+    assert db.execute(text("SELECT status FROM archive_labels WHERE id=:id"), {"id": held}).scalar_one() == "candidate"
+    assert (
+        db.execute(text("SELECT status FROM archive_label_assignments WHERE label_id=:id"), {"id": held}).scalar_one()
+        == "candidate"
+    )
+    assert db.execute(text("SELECT status FROM archive_labels WHERE id=:label"), ids).scalar_one() == "published"
+
+
 @pytest.mark.parametrize(
     "defect",
     [
