@@ -10,6 +10,7 @@ on:
         options:
           - api
           - ingest-cuda
+          - clips
       base_manifest_json:
         description: Verified release-images.json whose unchanged digests will be reused
         required: true
@@ -33,7 +34,7 @@ jobs:
           set -euo pipefail
           [[ -n "$RELEASE_OPERATOR" && "$ACTOR" == "$RELEASE_OPERATOR" ]]
           [[ "$REF" =~ ^refs/heads/(release/v|codex/) ]]
-          [[ "$ROLE" == api || "$ROLE" == ingest-cuda ]]
+          [[ "$ROLE" == api || "$ROLE" == ingest-cuda || "$ROLE" == clips ]]
       - name: Checkout exact source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -50,6 +51,9 @@ jobs:
               ;;
             ingest-cuda)
               printf '%s\n' 'dockerfile=Dockerfile.ingest.cuda' 'image=git.subcult.tv/subculture-collective/hasanara-ingest-cuda' >> "$GITHUB_OUTPUT"
+              ;;
+            clips)
+              printf '%s\n' 'dockerfile=Dockerfile.clips' 'image=git.subcult.tv/subculture-collective/hasanara-clips' >> "$GITHUB_OUTPUT"
               ;;
             *) exit 1 ;;
           esac
@@ -241,6 +245,15 @@ jobs:
           python3 - <<'PY'
           import json, os
           from pathlib import Path
+          if os.environ["ROLE"] == "clips":
+              Path("clip-worker-image.json").write_text(json.dumps({
+                  "schema_version": 1,
+                  "source_commit": os.environ["SOURCE_COMMIT"],
+                  "image": f"{os.environ['IMAGE']}@{os.environ['DIGEST']}",
+                  "role": "clips",
+                  "service": "clip-worker",
+              }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+              raise SystemExit(0)
           manifest = json.loads(Path("base-release-images.json").read_text(encoding="utf-8"))
           manifest["source_commit"] = os.environ["SOURCE_COMMIT"]
           manifest["images"][os.environ["ROLE"]] = f"{os.environ['IMAGE']}@{os.environ['DIGEST']}"
@@ -256,6 +269,7 @@ jobs:
           name: selective-backend-release-${{ inputs.role }}
           path: |
             release-images.json
+            clip-worker-image.json
             base-release-images.json
             reused-images.txt
             selected-signature.verify.json

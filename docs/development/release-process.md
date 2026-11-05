@@ -26,9 +26,13 @@ conventions.
   `redis` digest. Core is headless and publishes no frontend image; each archive builds
   and deploys its own frontend.
 - `.gitea/workflows/backend-role-release.yaml` ("Selective application release artifact")
-  rebuilds only `api` or `ingest-cuda` and reuses the other digests from a verified base
+  rebuilds only `api`, `ingest-cuda` or `clips` and reuses the other digests from a verified base
   manifest. A base manifest from an older release that still lists `frontend` is accepted;
   the `frontend` entry is dropped from the new manifest.
+- The `clips` role publishes the optional clip-worker image and a separate
+  `clip-worker-image.json`, so opt-in clipping does not change the core deployment
+  manifest or force database/ML image updates. It receives the same vulnerability
+  scan, signature, provenance and SBOM checks as other selective images.
 - The OpenAPI document `docs/api/openapi.json` is versioned with the source. Frontends
   generate their clients from the copy at the release's `source_commit`.
 

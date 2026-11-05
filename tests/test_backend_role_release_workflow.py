@@ -13,9 +13,11 @@ def test_selective_release_accepts_only_supported_application_roles():
 
     assert "- api" in source
     assert "- ingest-cuda" in source
-    assert '[[ "$ROLE" == api || "$ROLE" == ingest-cuda ]]' in source
+    assert '[[ "$ROLE" == api || "$ROLE" == ingest-cuda || "$ROLE" == clips ]]' in source
     assert "Dockerfile.api" in source
     assert "Dockerfile.ingest.cuda" in source
+    assert "- clips" in source
+    assert "Dockerfile.clips" in source
     assert "frontend/Dockerfile" not in source
     assert "- frontend" not in source
     assert "hasanara-frontend" not in source
@@ -44,8 +46,8 @@ def test_selected_digest_is_scanned_signed_attested_and_uploaded():
     assert 'docker push "$IMAGE:$TAG"' not in source
     assert "quay.io/skopeo/stable@sha256:47853bb9fb24202af9110531ebd6e43c5f97701254ca290596640290d17942f4" in source
     assert 'destination="docker://${IMAGE}:${TAG}"' in source
-    assert 'destination_tls_verify=true' in source
-    assert 'if docker container inspect gitea >/dev/null 2>&1; then' in source
+    assert "destination_tls_verify=true" in source
+    assert "if docker container inspect gitea >/dev/null 2>&1; then" in source
     assert 'docker network create --internal "$network"' in source
     assert 'docker network connect --alias registry-origin "$network" gitea' in source
     assert 'destination="docker://registry-origin:3000/${repository}:${TAG}"' in source
@@ -67,3 +69,34 @@ def test_selective_release_drops_a_legacy_frontend_role_from_the_base_manifest()
     assert 'if role not in {os.environ["ROLE"], "redis", "frontend"}:' in source
     assert 'manifest["images"].pop("frontend", None)' in source
     assert 'manifest["services"].pop("frontend", None)' in source
+
+
+def test_clip_worker_release_has_a_separate_manifest_without_changing_core_roles(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    import sys
+    import textwrap
+
+    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    step = next(
+        item
+        for item in workflow["jobs"]["backend-image"]["steps"]
+        if item["name"] == "Compose selective immutable manifest"
+    )
+    script = textwrap.dedent(step["run"].split("python3 - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0])
+    commit = "a" * 40
+    digest = "sha256:" + "b" * 64
+    image = "git.subcult.tv/subculture-collective/hasanara-clips"
+    monkeypatch.setenv("ROLE", "clips")
+    monkeypatch.setenv("SOURCE_COMMIT", commit)
+    monkeypatch.setenv("IMAGE", image)
+    monkeypatch.setenv("DIGEST", digest)
+    subprocess.run([sys.executable, "-c", script], cwd=tmp_path, check=True)
+    assert json.loads((tmp_path / "clip-worker-image.json").read_text()) == {
+        "schema_version": 1,
+        "source_commit": commit,
+        "image": f"{image}@{digest}",
+        "role": "clips",
+        "service": "clip-worker",
+    }
+    assert not (tmp_path / "release-images.json").exists()

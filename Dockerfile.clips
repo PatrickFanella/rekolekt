@@ -1,10 +1,14 @@
 FROM python:3.11-slim
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
+ENV GIT_COMMIT=${GIT_COMMIT} BUILD_DATE=${BUILD_DATE}
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 COPY requirements-api.txt constraints.txt ./
 RUN pip install -c constraints.txt -r requirements-api.txt
+RUN python -m pip uninstall --yes pip setuptools wheel
 COPY app ./app
 COPY scripts/clip_exports.py ./scripts/clip_exports.py
 RUN useradd --uid 10001 --create-home clips && mkdir -m 700 /spool && chown clips:clips /spool
