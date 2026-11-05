@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Backfill persisted transcript blocks for existing videos.
 
-Finds videos that have raw segments but no transcript_blocks rows, or whose
-stored blocks were built by an older FORMATTER_VERSION, rebuilds the blocks
+Finds videos that have raw segments but no transcript_blocks rows, whose
+stored blocks were built by another FORMATTER_VERSION, or whose diarization
+completed after the blocks were stored, rebuilds the blocks
 deterministically from segments, and persists them.
 
 Videos are visited in id order (keyset pagination), each one in its own short
@@ -50,6 +51,17 @@ def _load_batch(conn, limit: int, after_id: str):
                   OR EXISTS (
                       SELECT 1 FROM transcript_blocks tb
                       WHERE tb.video_id = v.id AND tb.formatter_version <> :formatter_version
+                  )
+                  -- Diarization updates speaker labels after the blocks were stored, but its
+                  -- database role may not write transcript_blocks. The native pipeline writes
+                  -- blocks and videos.updated_at in one transaction (equal now()), so only a
+                  -- later video update such as diarization completion matches here.
+                  OR (
+                      v.diarization_state = 'completed'
+                      AND EXISTS (
+                          SELECT 1 FROM transcript_blocks tb
+                          WHERE tb.video_id = v.id AND tb.created_at < v.updated_at
+                      )
                   )
               )
             ORDER BY v.id

@@ -37,6 +37,16 @@ def test_batch_query_selects_missing_or_outdated_blocks_after_cursor():
     assert params == {"limit": 50, "after_id": VIDEO_IDS[0], "formatter_version": FORMATTER_VERSION}
 
 
+def test_batch_query_selects_blocks_older_than_completed_diarization():
+    conn = Mock()
+
+    backfill._load_batch(conn, 50, VIDEO_IDS[0])
+
+    sql = str(conn.execute.call_args.args[0])
+    assert "v.diarization_state = 'completed'" in sql
+    assert "tb.created_at < v.updated_at" in sql
+
+
 def test_backfill_rebuilds_each_video_in_its_own_transaction_across_batches():
     engine = _fake_engine()
     segments = [TranscriptSegment(start_ms=0, end_ms=1000, text="hello there", speaker_label=None)]

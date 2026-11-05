@@ -15,7 +15,7 @@ python scripts/backfill_transcript_blocks.py --dry-run --once --batch-size 20  #
 python scripts/backfill_transcript_blocks.py --batch-size 100
 ```
 
-The script selects videos with segments whose blocks are missing or built by another version. It walks them in id order and rebuilds each video in its own short transaction, so it can be stopped and rerun safely; finished videos no longer match. It reads the segments' current speaker labels.
+The script selects videos with segments whose blocks are missing, built by another version, or older than a completed diarization run. Diarization updates speaker labels with a role that may not write `transcript_blocks`, so run the script after diarization batches as well. It walks the selected videos in id order and rebuilds each video in its own short transaction, so it can be stopped and rerun safely; finished videos no longer match. It reads the segments' current speaker labels.
 
 ## 20260813_multi_provider_ids: multiple identities per provider
 
