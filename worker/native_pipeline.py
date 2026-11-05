@@ -9,6 +9,7 @@ from typing import Any, Callable
 from sqlalchemy import text
 
 from app import crud
+from app.archive.broadcast_dates import broadcast_columns
 from app.cache import invalidate_video_data
 from app.logging_config import get_logger
 from app.settings import settings
@@ -120,6 +121,12 @@ def _enrich_source_metadata(ctx: VideoPipelineContext, deps: NativePipelineDepen
                             channel_name = COALESCE(NULLIF(channel_name, ''), :channel_name),
                             title = COALESCE(NULLIF(title, ''), :title),
                             duration_seconds = COALESCE(duration_seconds, :duration),
+                            broadcast_date = CASE WHEN broadcast_date_source = 'manual'
+                                THEN broadcast_date ELSE :broadcast_date END,
+                            broadcast_kind = CASE WHEN broadcast_date_source = 'manual'
+                                THEN broadcast_kind ELSE :broadcast_kind END,
+                            broadcast_date_source = CASE WHEN broadcast_date_source = 'manual'
+                                THEN broadcast_date_source ELSE :broadcast_date_source END,
                             updated_at = now()
                         WHERE id = :id
                           AND state IN ('downloading', 'transcoding', 'transcribing')
@@ -131,6 +138,11 @@ def _enrich_source_metadata(ctx: VideoPipelineContext, deps: NativePipelineDepen
                         "channel_name": channel_name,
                         "title": title,
                         "duration": duration,
+                        # Derive from the values the row will hold after COALESCE.
+                        **broadcast_columns(
+                            ctx.video.get("title") or title,
+                            ctx.video.get("uploaded_at") or uploaded_at,
+                        ),
                     },
                 )
                 if updated.rowcount != 1:
