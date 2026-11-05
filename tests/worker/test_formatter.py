@@ -165,7 +165,7 @@ class TestFillerRemoval:
         }
         formatter = TranscriptFormatter(config=config)
 
-        segments = [{"text": "Well, okay, kind of sort of you see right", "start": 0, "end": 1000}]
+        segments = [{"text": "Well, okay, kind of sort of you see right, it works", "start": 0, "end": 1000}]
 
         result = formatter.format_segments(segments)
 
@@ -173,6 +173,7 @@ class TestFillerRemoval:
         # Most fillers should be gone
         assert "well" not in result[0]["text"].lower()
         assert "okay" not in result[0]["text"].lower()
+        assert result[0]["text"] == "It works."
 
     def test_no_filler_removal(self):
         """Test filler removal disabled."""

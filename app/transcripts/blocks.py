@@ -8,7 +8,7 @@ from worker.formatter import TranscriptFormatter
 
 from .types import TranscriptSegment
 
-FORMATTER_VERSION = "rule-v4"
+FORMATTER_VERSION = "rule-v5"
 
 
 @dataclass(frozen=True)
