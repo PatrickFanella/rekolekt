@@ -336,9 +336,14 @@ Prompt version: {PROMPT_VERSION}
 Create useful navigation chapters and grounded retrieval metadata from the supplied timestamped transcript.
 Use only the transcript. Do not invent people, events, claims, games, places, or outcomes.
 Prefer coherent editorial sections over brief conversational shifts. Merge adjacent discussion of the same subject.
+Start each chapter at the start_ms of the block where its subject begins.
 Titles must be specific, concise, safe to publish, and understandable without surrounding transcript text.
+A title names what is discussed; do not quote or paraphrase the chapter's first sentence.
 Do not reproduce slurs, insults, profanity, sponsor copy, chat filler, or sentence fragments in titles.
 Subjects are the episode's sustained primary entities or issues. Keywords are specific phrases a user might search.
+Name specific people, organizations, bills, events, places, games, or media rather than generic themes.
+Use the transcript's own wording for subjects and keywords; values that do not appear in it are discarded.
+Do not use the stream itself, chat, donations, viewers, technical problems, or the host as subjects or keywords.
 Choose zero to three episode-defining categories only from the supplied controlled taxonomy and definitions.
 A category must characterize a substantial portion of the episode; do not classify from a short tangent.
 Return an empty category list when no controlled category fits instead of choosing a weak match.

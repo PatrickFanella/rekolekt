@@ -162,6 +162,10 @@ def test_build_openrouter_request_uses_identical_strict_controls():
         "data_collection": "deny",
         "require_parameters": True,
     }
+    system = body["messages"][0]["content"]
+    assert "Name specific people" in system
+    assert "do not quote or paraphrase the chapter's first sentence" in system
+    assert "Do not use the stream itself, chat" in system
     user = json.loads(body["messages"][1]["content"])
     assert user["target_chapter_count"] == 1
     assert user["category_taxonomy"]["politics"] == "Politics"
