@@ -19,6 +19,7 @@ from .labeling.repository import (
     create_extraction_run,
     finish_extraction_run,
     insert_assignment,
+    resolve_existing_label,
     upsert_label_candidate,
 )
 from .openrouter_enrichment import (
@@ -34,6 +35,7 @@ from .openrouter_enrichment import (
 class EnrichmentPersistenceDependencies:
     upsert_label: Callable[..., str] = upsert_label_candidate
     insert_assignment: Callable[..., str] = insert_assignment
+    resolve_label: Callable[..., dict[str, Any] | None] = resolve_existing_label
 
 
 @dataclass(frozen=True)
@@ -163,6 +165,42 @@ def _grounded_label_evidence(
     return evidence
 
 
+def _assignable_label_id(
+    db: Any,
+    deps: EnrichmentPersistenceDependencies,
+    *,
+    label: str,
+    kind: str,
+    run_id: str,
+) -> str | None:
+    """Return the label an automatic assignment may use, or None to drop it.
+
+    Approval refuses rejected, merged and unpublished editorial labels. Resolve
+    aliases and merges first, so a refused label is skipped instead of rolling
+    back the whole paid run. Hidden labels are dropped as well.
+    """
+    existing = deps.resolve_label(db, label)
+    if existing is not None:
+        refused = existing["status"] not in {"candidate", "published"} or (
+            existing["status"] == "candidate" and existing["source"] != "automatic"
+        )
+        if refused:
+            return None
+        if existing["slug"] != slugify_label(label):
+            return str(existing["id"])
+    return deps.upsert_label(
+        db,
+        label=label,
+        kind=kind,
+        aliases=[],
+        confidence_score=0.75,
+        source="automatic",
+        publish_tier="bronze",
+        status="candidate",
+        run_id=run_id,
+    )
+
+
 def _extract_id(row: Any) -> str:
     if row is None:
         raise RuntimeError("chapter insert did not return an id")
@@ -269,8 +307,10 @@ def persist_enrichment_candidates(
         "assignments": 0,
         "skipped_ungrounded_labels": 0,
         "skipped_duplicate_labels": 0,
+        "skipped_refused_labels": 0,
     }
     assigned_slugs: set[str] = set()
+    assigned_ids: set[str] = set()
     block_by_index = {block.block_index: block for block in episode.blocks}
     for category in result.candidate.categories:
         evidence = [
@@ -287,17 +327,10 @@ def persist_enrichment_candidates(
             for block_index in category.evidence_block_indexes
             if (block := block_by_index.get(block_index)) is not None
         ]
-        label_id = deps.upsert_label(
-            db,
-            label=CATEGORY_LABELS[category.slug],
-            kind="category",
-            aliases=[],
-            confidence_score=0.75,
-            source="automatic",
-            publish_tier="bronze",
-            status="candidate",
-            run_id=run_id,
-        )
+        label_id = _assignable_label_id(db, deps, label=CATEGORY_LABELS[category.slug], kind="category", run_id=run_id)
+        if label_id is None or label_id in assigned_ids:
+            metrics["skipped_refused_labels" if label_id is None else "skipped_duplicate_labels"] += 1
+            continue
         deps.insert_assignment(
             db,
             label_id=label_id,
@@ -314,6 +347,7 @@ def persist_enrichment_candidates(
         metrics["categories"] += 1
         metrics["labels"] += 1
         metrics["assignments"] += 1
+        assigned_ids.add(label_id)
         assigned_slugs.add(slugify_label(CATEGORY_LABELS[category.slug]))
     labels = [*result.candidate.subjects, *result.candidate.keywords]
     for label in labels:
@@ -328,17 +362,11 @@ def persist_enrichment_candidates(
         if not evidence:
             metrics["skipped_ungrounded_labels"] += 1
             continue
-        label_id = deps.upsert_label(
-            db,
-            label=label,
-            kind="topic",
-            aliases=[],
-            confidence_score=0.75,
-            source="automatic",
-            publish_tier="bronze",
-            status="candidate",
-            run_id=run_id,
-        )
+        label_id = _assignable_label_id(db, deps, label=label, kind="topic", run_id=run_id)
+        if label_id is None or label_id in assigned_ids:
+            # Two values can resolve to one label through an alias or merge.
+            metrics["skipped_refused_labels" if label_id is None else "skipped_duplicate_labels"] += 1
+            continue
         deps.insert_assignment(
             db,
             label_id=label_id,
@@ -354,6 +382,7 @@ def persist_enrichment_candidates(
         )
         metrics["labels"] += 1
         metrics["assignments"] += 1
+        assigned_ids.add(label_id)
         assigned_slugs.add(slug)
     return metrics
 

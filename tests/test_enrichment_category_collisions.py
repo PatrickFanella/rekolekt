@@ -273,3 +273,108 @@ def test_canary_reconciles_stored_counts(db_session, persisted_collision, mutati
         ),
     ).scalar_one()
     assert outcome == ("passed" if mutation == "none" else "failed")
+
+
+def _insert_label(db, slug, label, status, source="automatic", canonical_id=None):
+    return str(
+        db.execute(
+            text("""
+            INSERT INTO archive_labels (slug, label, kind, status, source, publish_tier, confidence_score, canonical_id)
+            VALUES (:slug, :label, 'topic', :status, :source, 'bronze', 0.9, CAST(:canonical AS uuid))
+            RETURNING id
+        """),
+            {"slug": slug, "label": label, "status": status, "source": source, "canonical": canonical_id},
+        ).scalar_one()
+    )
+
+
+def test_llm_labels_resolve_through_aliases_and_canonicals_and_skip_refused_labels(db_session):
+    job_id, video_id = str(uuid.uuid4()), str(uuid.uuid4())
+    db_session.execute(
+        text(
+            "INSERT INTO jobs (id, kind, input_url, state) VALUES (:id, 'single', 'https://example.test/v', 'completed')"
+        ),
+        {"id": job_id},
+    )
+    db_session.execute(
+        text(
+            "INSERT INTO videos (id, job_id, youtube_id, idx, title, duration_seconds, state) "
+            "VALUES (:id, :job, :youtube, 0, 'Labor stream', 1200, 'completed')"
+        ),
+        {"id": video_id, "job": job_id, "youtube": uuid.uuid4().hex[:11]},
+    )
+    suffix = uuid.uuid4().hex[:8]
+    canonical = _insert_label(db_session, f"labor-unions-{suffix}", f"Labor Unions {suffix}", "published")
+    _insert_label(db_session, f"trade-unions-{suffix}", f"Trade Unions {suffix}", "merged", canonical_id=canonical)
+    _insert_label(db_session, f"rent-strikes-{suffix}", f"Rent Strikes {suffix}", "rejected")
+    _insert_label(db_session, f"tenant-unions-{suffix}", f"Tenant Unions {suffix}", "hidden")
+    aliased = _insert_label(db_session, f"housing-crisis-{suffix}", f"Housing Crisis {suffix}", "published")
+    db_session.execute(
+        text("""INSERT INTO archive_label_aliases (label_id, alias, normalized_alias, source, status)
+            VALUES (:label, :alias, :normalized, 'admin', 'active')"""),
+        {"label": aliased, "alias": f"Housing Shortage {suffix}", "normalized": f"housing shortage {suffix}"},
+    )
+    run_id = create_extraction_run(
+        db_session,
+        "video",
+        "premium",
+        video_id=video_id,
+        model_name="deepseek/deepseek-v4-pro",
+        prompt_version=PROMPT_VERSION,
+    )
+    text_value = (
+        f"Trade unions {suffix} and labor unions {suffix}; rent strikes {suffix}; tenant unions {suffix}; "
+        f"the housing shortage {suffix} and the housing crisis {suffix}."
+    )
+    episode = EpisodeInput(
+        video_id=video_id,
+        duration_ms=1_200_000,
+        blocks=[
+            dict(block_index=0, start_ms=0, end_ms=600_000, text=text_value),
+            dict(block_index=1, start_ms=600_000, end_ms=1_200_000, text=text_value),
+        ],
+    )
+    result = OpenRouterEpisodeResult(
+        video_id=video_id,
+        model="deepseek/deepseek-v4-pro",
+        provider="test",
+        prompt_version=PROMPT_VERSION,
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost_usd=0.01,
+        elapsed_seconds=1.0,
+        candidate=EpisodeEnrichmentCandidate(
+            subjects=[f"Trade Unions {suffix}", f"Labor Unions {suffix}", f"Rent Strikes {suffix}"],
+            keywords=[f"Tenant Unions {suffix}", f"Housing Shortage {suffix}"],
+            categories=[dict(slug="politics", evidence_block_indexes=[0, 1])],
+            chapters=[
+                dict(
+                    start_ms=0,
+                    title="Labor and trade unions",
+                    summary="Unions are discussed.",
+                    evidence_block_indexes=[0],
+                ),
+                dict(
+                    start_ms=600_000,
+                    title="The housing shortage",
+                    summary="Housing is discussed.",
+                    evidence_block_indexes=[1],
+                ),
+            ],
+        ),
+    )
+    metrics = persist_enrichment_candidates(db_session, episode, result, run_id=run_id)
+    label_ids = {
+        str(row[0])
+        for row in db_session.execute(
+            text(
+                "SELECT label_id FROM archive_label_assignments WHERE run_id=:run AND evidence->0->>'extractor'='llm'"
+            ),
+            {"run": run_id},
+        )
+    }
+    assert label_ids == {canonical, aliased}
+    assert metrics["skipped_refused_labels"] == 2
+    assert metrics["skipped_duplicate_labels"] == 1
+    metrics.update(window_count=1, cost_usd=0.01, repairs={"evidence_overlap_violations": 0})
+    validate_stored_candidates(db_session, video_id, run_id, metrics)

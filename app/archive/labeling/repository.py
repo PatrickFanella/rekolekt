@@ -182,6 +182,51 @@ def upsert_label_candidate(
     return label_id
 
 
+def resolve_existing_label(db, label: str) -> dict[str, Any] | None:
+    """Find the label an automatic value would land on, following merges.
+
+    Match the slug first, then one unambiguous active alias. Follow
+    ``canonical_id`` so merged labels resolve to their surviving label.
+    Return the final row (id, slug, status, source, canonical_id) or None.
+    """
+    row = db.execute(text("SELECT id FROM archive_labels WHERE slug = :slug"), {"slug": slugify_label(label)}).first()
+    if row is None:
+        alias = normalized_alias(label)
+        matches = (
+            db.execute(
+                text("""
+                SELECT DISTINCT label_id FROM archive_label_aliases
+                WHERE normalized_alias = :alias AND status = 'active' AND NOT is_ambiguous
+                LIMIT 2
+                """),
+                {"alias": alias},
+            ).all()
+            if alias
+            else []
+        )
+        if len(matches) != 1:
+            return None
+        row = matches[0]
+    label_id = _extract_id(row)
+    seen: set[str] = set()
+    while label_id not in seen:
+        seen.add(label_id)
+        current = (
+            db.execute(
+                text("SELECT id, slug, status, source, canonical_id FROM archive_labels WHERE id = :id"),
+                {"id": label_id},
+            )
+            .mappings()
+            .first()
+        )
+        if current is None:
+            return None
+        if current["canonical_id"] is None:
+            return {key: (str(value) if key == "id" else value) for key, value in current.items()}
+        label_id = str(current["canonical_id"])
+    return None
+
+
 def assignment_key(
     label_id: str,
     video_id: str,

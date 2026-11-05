@@ -82,6 +82,9 @@ class _Result:
     def first(self):
         return self._first
 
+    def all(self):
+        return []
+
 
 class _Db:
     def __init__(self):
@@ -273,6 +276,7 @@ def test_persist_enrichment_writes_review_candidates_with_grounded_labels():
         "assignments": 5,
         "skipped_ungrounded_labels": 1,
         "skipped_duplicate_labels": 0,
+        "skipped_refused_labels": 0,
     }
 
 
