@@ -1,4 +1,11 @@
-from worker.vocabulary import apply_vocabulary_corrections, load_vocabularies
+import pytest
+
+from worker.vocabulary import VocabularyProcessor, apply_vocabulary_corrections, load_vocabularies
+
+
+@pytest.fixture
+def hasanara_preset(monkeypatch):
+    monkeypatch.setattr("worker.vocabulary.settings.ARCHIVE_EDITORIAL_PRESET", "hasanara")
 
 
 class _Result:
@@ -55,7 +62,7 @@ def test_worker_fails_if_a_selected_vocabulary_disappeared():
         raise AssertionError("missing selected vocabulary must fail the worker stage")
 
 
-def test_archive_vocabulary_corrects_recurring_hasanabi_intro_without_job_selection():
+def test_archive_vocabulary_corrects_recurring_hasanabi_intro_without_job_selection(hasanara_preset):
     connection = _Connection()
     segments = [
         {
@@ -80,9 +87,46 @@ def test_archive_vocabulary_corrects_recurring_hasanabi_intro_without_job_select
     assert connection.calls == []
 
 
-def test_archive_vocabulary_corrects_recurring_guest_names():
+def test_archive_vocabulary_corrects_recurring_guest_names(hasanara_preset):
     segments = [{"text": "Oliver Largan spoke with Amela Keros."}]
 
     corrected = apply_vocabulary_corrections(_Connection(), segments, None, [])
 
     assert corrected[0]["text"] == "Oliver Larkin spoke with Melat Kiros."
+
+
+def test_archive_vocabulary_leaves_ordinary_thoughts_phrase_alone(hasanara_preset):
+    segments = [{"text": "I have my thoughts and I'm going to share them."}]
+
+    corrected = apply_vocabulary_corrections(_Connection(), segments, None, [])
+
+    assert corrected[0]["text"] == "I have my thoughts and I'm going to share them."
+
+
+def test_archive_vocabulary_is_not_applied_for_generic_preset(monkeypatch):
+    monkeypatch.setattr("worker.vocabulary.settings.ARCHIVE_EDITORIAL_PRESET", "generic")
+    segments = [{"text": "Oliver Largan spoke with Amela Keros."}]
+
+    corrected = apply_vocabulary_corrections(_Connection(), segments, None, [])
+
+    assert corrected[0]["text"] == "Oliver Largan spoke with Amela Keros."
+
+
+def test_archive_vocabulary_matches_curly_apostrophes(hasanara_preset):
+    segments = [{"text": "I\u2019m a Sompiker."}]
+
+    corrected = apply_vocabulary_corrections(_Connection(), segments, None, [])
+
+    assert corrected[0]["text"] == "I'm Hasan Piker."
+
+
+def test_vocabulary_pattern_ending_in_punctuation_matches():
+    processor = VocabularyProcessor([{"terms": [{"pattern": r"U\.S\.", "replacement": "US"}]}])
+
+    assert processor.process_text("the U.S. policy") == "the US policy"
+
+
+def test_vocabulary_replacement_is_literal():
+    processor = VocabularyProcessor([{"terms": [{"pattern": "foo", "replacement": r"bar\1 \g<0>"}]}])
+
+    assert processor.process_text("a foo b") == r"a bar\1 \g<0> b"
