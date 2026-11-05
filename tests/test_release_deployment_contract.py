@@ -53,6 +53,20 @@ def test_api_packages_and_smokes_enrichment_maintenance_entrypoint():
     assert "RUN python scripts/approve_archive_enrichment.py --help > /dev/null" in dockerfile
 
 
+def test_api_image_copies_every_worker_module_the_app_imports():
+    # The API image copies only selected worker modules; an app import of any
+    # other one crashes the API at start-up.
+    dockerfile = (ROOT / "Dockerfile.api").read_text()
+    copy_line = next(line for line in dockerfile.splitlines() if line.startswith("COPY worker/"))
+    copied = {Path(part).stem for part in copy_line.split()[1:-1]}
+    imported = set()
+    for path in [*(ROOT / "app").rglob("*.py"), *(ROOT / "worker" / f"{name}.py" for name in copied)]:
+        if path.exists():
+            imported.update(re.findall(r"^\s*from worker\.(\w+) import", path.read_text(), re.MULTILINE))
+    assert imported <= copied, f"Dockerfile.api is missing worker modules: {sorted(imported - copied)}"
+    assert "COPY scripts/backfill_transcript_blocks.py ./scripts/backfill_transcript_blocks.py" in dockerfile
+
+
 def digest(name: str) -> str:
     return f"registry.invalid/hasanara/{name}@sha256:{'a' * 64}"
 

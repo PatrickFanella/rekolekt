@@ -29,7 +29,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 WORKDIR /app
 COPY app ./app
 COPY pyproject.toml ./
-COPY worker/__init__.py worker/formatter.py worker/state_model.py ./worker/
+COPY worker/__init__.py worker/formatter.py worker/state_model.py worker/vocabulary.py ./worker/
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY scripts/run_migrations.py ./scripts/run_migrations.py
@@ -39,6 +39,7 @@ COPY scripts/refresh_archive_intelligence.py ./scripts/refresh_archive_intellige
 COPY scripts/run_archive_enrichment_queue.py ./scripts/run_archive_enrichment_queue.py
 COPY scripts/approve_archive_enrichment.py ./scripts/approve_archive_enrichment.py
 COPY scripts/recover_attention_backlog.py ./scripts/recover_attention_backlog.py
+COPY scripts/backfill_transcript_blocks.py ./scripts/backfill_transcript_blocks.py
 COPY fonts ./fonts
 RUN python -m compileall -q app
 RUN python scripts/approve_archive_enrichment.py --help > /dev/null

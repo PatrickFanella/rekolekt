@@ -1,10 +1,12 @@
-FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu22.04
+# Ubuntu 24.04 ships Python 3.12; the pinned Pillow needs 3.11 or newer.
+FROM nvidia/cuda:12.8.0-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
     NVIDIA_VISIBLE_DEVICES=all \
     NVIDIA_DRIVER_CAPABILITIES=compute,utility
 
@@ -67,7 +69,7 @@ RUN curl -fsSL https://deno.land/install.sh | sh \
 
 WORKDIR /app
 COPY requirements-api.txt requirements-ingest.txt constraints.txt ./
-RUN pip3 install --upgrade pip==26.2 setuptools==84.1.0 wheel==0.47.0
+RUN pip3 install --ignore-installed pip==26.2 setuptools==84.1.0 wheel==0.47.0
 RUN pip3 install -c constraints.txt -r requirements-api.txt \
     && pip3 check
 RUN pip3 install -c constraints.txt ctranslate2==4.6.0 \
