@@ -376,18 +376,16 @@ verify_enrichment_canary_result() {
             WHERE (metrics ->> 'window_count')::integer = 2
               AND (metrics ->> 'cost_usd')::numeric <= 1.0
               AND (metrics -> 'repairs' ->> 'evidence_overlap_violations')::integer = 0
-              AND (metrics ->> 'categories')::integer >= 1) = 1 AS metrics_valid,
+              AND (metrics ->> 'categories')::integer >= 0) = 1 AS metrics_valid,
           (SELECT count(*) FROM target_run t JOIN stored s ON s.id = t.id
             WHERE s.chapters = (t.metrics ->> 'chapters')::integer
               AND s.assignments = (t.metrics ->> 'assignments')::integer
               AND s.labels = (t.metrics ->> 'labels')::integer
-              AND s.categories = (t.metrics ->> 'categories')::integer
-              AND s.categories >= 1) = 1 AS stored_counts_match,
+              AND s.categories = (t.metrics ->> 'categories')::integer) = 1 AS stored_counts_match,
           (SELECT count(*) FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id
-            WHERE c.status = 'candidate' AND c.source = 'automatic') >= 4 AS candidate_chapters,
+            WHERE c.status = 'candidate' AND c.source = 'automatic') >= 2 AS candidate_chapters,
           (SELECT min(c.start_ms) = 0 AND max(c.end_ms) = v.duration_seconds * 1000
               AND count(*) = count(DISTINCT c.start_ms)
-              AND count(*) FILTER (WHERE c.start_ms = round(v.duration_seconds * 1000 / 2.0)) >= 1
             FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id
             JOIN videos v ON v.id = c.video_id GROUP BY v.duration_seconds) AS chapter_coverage,
           NOT EXISTS (SELECT 1 FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id

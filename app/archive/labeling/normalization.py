@@ -256,6 +256,23 @@ def normalized_alias(value: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"[^a-z0-9]+", " ", str(value or "").lower())).strip()
 
 
+def _fold_plural(term: str) -> str:
+    if len(term) > 4 and term.endswith("ies"):
+        return term[:-3] + "y"
+    if len(term) > 3 and term.endswith("s") and not term.endswith(("ss", "us", "is")):
+        return term[:-1]
+    return term
+
+
+def folded_terms(value: str) -> list[str]:
+    """Alias-normalized terms with possessive "s" dropped and simple plurals folded.
+
+    "Trump's tariffs" and "trump tariff" both become ["trump", "tariff"].
+    """
+    terms = normalized_alias(value).split()
+    return [_fold_plural(term) for index, term in enumerate(terms) if not (term == "s" and index > 0)]
+
+
 def slugify_label(value: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", str(value or "").lower()).strip("-")
     return slug or "label"

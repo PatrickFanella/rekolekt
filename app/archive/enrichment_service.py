@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -14,11 +13,13 @@ from .enrichment_exporter import export_enrichment_input
 from .enrichment_preflight import validate_enrichment_input
 from .enrichment_queue import OWNER_LOCK
 from .enrichment_runner import EpisodeInput
-from .labeling.normalization import slugify_label
+from .labeling.normalization import folded_terms, slugify_label
+from .labeling.quality import assess_label_quality
 from .labeling.repository import (
     create_extraction_run,
     finish_extraction_run,
     insert_assignment,
+    resolve_existing_label,
     upsert_label_candidate,
 )
 from .openrouter_enrichment import (
@@ -34,6 +35,7 @@ from .openrouter_enrichment import (
 class EnrichmentPersistenceDependencies:
     upsert_label: Callable[..., str] = upsert_label_candidate
     insert_assignment: Callable[..., str] = insert_assignment
+    resolve_label: Callable[..., dict[str, Any] | None] = resolve_existing_label
 
 
 @dataclass(frozen=True)
@@ -49,15 +51,17 @@ def validate_generated_candidates(episode: EpisodeInput, result: OpenRouterEpiso
     """Acceptance is a transaction gate, not an optional wrapper audit."""
     if result.evidence_overlap_violations:
         raise RuntimeError("archive enrichment chapter evidence does not overlap its chapter")
-    if not result.candidate.categories:
-        raise RuntimeError("archive enrichment quality gate: no sustained categories")
+    # Zero categories is valid: the prompt asks for an empty list when no
+    # controlled category fits, and the taxonomy has no catch-all.
     chapters = result.candidate.chapters
     starts = [chapter.start_ms for chapter in chapters]
     windows = max(
         1, math.ceil(episode.duration_ms / (getattr(config, "ARCHIVE_ENRICHMENT_MAX_WINDOW_MINUTES", 90) * 60_000))
     )
-    expected = {round(index * episode.duration_ms / windows) for index in range(windows)}
-    if result.window_count != windows or not expected <= set(starts) or starts != sorted(set(starts)):
+    # Every window must have been generated, and the chapters must tile the
+    # episode from zero. Window seams need not be chapter starts: a topic that
+    # continues across a seam is merged into one chapter.
+    if result.window_count != windows or not starts or starts[0] != 0 or starts != sorted(set(starts)):
         raise RuntimeError("archive enrichment quality gate: incomplete chapter coverage")
     blocks = {block.block_index: block for block in episode.blocks}
     for index, chapter in enumerate(chapters):
@@ -112,10 +116,8 @@ def validate_stored_candidates(db: Any, video_id: str, run_id: str, metrics: dic
         .mappings()
         .one()
     )
-    if (
-        not stored["review_only"]
-        or not stored["categories"]
-        or any(stored[key] != metrics[key] for key in ("chapters", "assignments", "labels", "categories"))
+    if not stored["review_only"] or any(
+        stored[key] != metrics[key] for key in ("chapters", "assignments", "labels", "categories")
     ):
         raise RuntimeError("archive enrichment quality gate: stored candidates do not match generation metrics")
 
@@ -124,7 +126,7 @@ _LABEL_STOPWORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "the", "t
 
 
 def _tokens(value: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9'-]+", value.casefold()) if token not in _LABEL_STOPWORDS}
+    return {term for term in folded_terms(value) if term not in _LABEL_STOPWORDS}
 
 
 def _grounded_label_evidence(
@@ -132,35 +134,67 @@ def _grounded_label_evidence(
     episode: EpisodeInput,
     result: OpenRouterEpisodeResult,
 ) -> list[dict[str, Any]]:
+    """Cite transcript blocks that contain every term of the label.
+
+    Search the whole transcript, not only chapter citations. A single-word
+    label must appear in at least two blocks, so one passing mention of a
+    generic word does not ground it.
+    """
     label_tokens = _tokens(label)
     if not label_tokens:
         return []
-    cited_indexes = list(
-        dict.fromkeys(
-            block_index for chapter in result.candidate.chapters for block_index in chapter.evidence_block_indexes
+    supporting = [block for block in episode.blocks if label_tokens <= _tokens(block.text)]
+    if len(supporting) < (2 if len(label_tokens) == 1 else 1):
+        return []
+    return [
+        {
+            "extractor": "llm",
+            "video_id": episode.video_id,
+            "block_index": block.block_index,
+            "start_ms": block.start_ms,
+            "end_ms": block.end_ms,
+            "text": block.text[:500],
+            "model": result.model,
+            "prompt_version": result.prompt_version,
+        }
+        for block in supporting[:3]
+    ]
+
+
+def _assignable_label_id(
+    db: Any,
+    deps: EnrichmentPersistenceDependencies,
+    *,
+    label: str,
+    kind: str,
+    run_id: str,
+) -> str | None:
+    """Return the label an automatic assignment may use, or None to drop it.
+
+    Approval refuses rejected, merged and unpublished editorial labels. Resolve
+    aliases and merges first, so a refused label is skipped instead of rolling
+    back the whole paid run. Hidden labels are dropped as well.
+    """
+    existing = deps.resolve_label(db, label)
+    if existing is not None:
+        refused = existing["status"] not in {"candidate", "published"} or (
+            existing["status"] == "candidate" and existing["source"] != "automatic"
         )
+        if refused:
+            return None
+        if existing["slug"] != slugify_label(label):
+            return str(existing["id"])
+    return deps.upsert_label(
+        db,
+        label=label,
+        kind=kind,
+        aliases=[],
+        confidence_score=0.75,
+        source="automatic",
+        publish_tier="bronze",
+        status="candidate",
+        run_id=run_id,
     )
-    block_by_index = {block.block_index: block for block in episode.blocks}
-    evidence = []
-    for block_index in cited_indexes:
-        block = block_by_index.get(block_index)
-        if block is None or not label_tokens <= _tokens(block.text):
-            continue
-        evidence.append(
-            {
-                "extractor": "llm",
-                "video_id": episode.video_id,
-                "block_index": block.block_index,
-                "start_ms": block.start_ms,
-                "end_ms": block.end_ms,
-                "text": block.text[:500],
-                "model": result.model,
-                "prompt_version": result.prompt_version,
-            }
-        )
-        if len(evidence) == 3:
-            break
-    return evidence
 
 
 def _extract_id(row: Any) -> str:
@@ -269,8 +303,12 @@ def persist_enrichment_candidates(
         "assignments": 0,
         "skipped_ungrounded_labels": 0,
         "skipped_duplicate_labels": 0,
+        "skipped_refused_labels": 0,
+        "skipped_low_quality_labels": 0,
+        "held_for_review_labels": 0,
     }
     assigned_slugs: set[str] = set()
+    assigned_ids: set[str] = set()
     block_by_index = {block.block_index: block for block in episode.blocks}
     for category in result.candidate.categories:
         evidence = [
@@ -287,17 +325,10 @@ def persist_enrichment_candidates(
             for block_index in category.evidence_block_indexes
             if (block := block_by_index.get(block_index)) is not None
         ]
-        label_id = deps.upsert_label(
-            db,
-            label=CATEGORY_LABELS[category.slug],
-            kind="category",
-            aliases=[],
-            confidence_score=0.75,
-            source="automatic",
-            publish_tier="bronze",
-            status="candidate",
-            run_id=run_id,
-        )
+        label_id = _assignable_label_id(db, deps, label=CATEGORY_LABELS[category.slug], kind="category", run_id=run_id)
+        if label_id is None or label_id in assigned_ids:
+            metrics["skipped_refused_labels" if label_id is None else "skipped_duplicate_labels"] += 1
+            continue
         deps.insert_assignment(
             db,
             label_id=label_id,
@@ -314,6 +345,7 @@ def persist_enrichment_candidates(
         metrics["categories"] += 1
         metrics["labels"] += 1
         metrics["assignments"] += 1
+        assigned_ids.add(label_id)
         assigned_slugs.add(slugify_label(CATEGORY_LABELS[category.slug]))
     labels = [*result.candidate.subjects, *result.candidate.keywords]
     for label in labels:
@@ -324,21 +356,24 @@ def persist_enrichment_candidates(
             # Use the repository's slug normalization, not display-string equality.
             metrics["skipped_duplicate_labels"] += 1
             continue
+        # Drop noise. Hold a "review" value for an editor only when the policy
+        # found a junk or low-information signal; a review caused by the base
+        # score or a canonical-name hint alone is kept, since grounding is the
+        # accuracy gate for model labels.
+        quality = assess_label_quality(label, source="llm")
+        if quality.action == "mark_noise":
+            metrics["skipped_low_quality_labels"] += 1
+            continue
+        held = quality.action == "review" and bool(set(quality.reasons) - {"canonical_hint_available"})
         evidence = _grounded_label_evidence(label, episode, result)
         if not evidence:
             metrics["skipped_ungrounded_labels"] += 1
             continue
-        label_id = deps.upsert_label(
-            db,
-            label=label,
-            kind="topic",
-            aliases=[],
-            confidence_score=0.75,
-            source="automatic",
-            publish_tier="bronze",
-            status="candidate",
-            run_id=run_id,
-        )
+        label_id = _assignable_label_id(db, deps, label=label, kind="topic", run_id=run_id)
+        if label_id is None or label_id in assigned_ids:
+            # Two values can resolve to one label through an alias or merge.
+            metrics["skipped_refused_labels" if label_id is None else "skipped_duplicate_labels"] += 1
+            continue
         deps.insert_assignment(
             db,
             label_id=label_id,
@@ -350,10 +385,12 @@ def persist_enrichment_candidates(
             evidence=evidence,
             source="llm",
             run_id=run_id,
-            component_scores={"llm_grounded": 1.0},
+            component_scores={"llm_grounded": 1.0, **({"quality_review": 1.0} if held else {})},
         )
         metrics["labels"] += 1
         metrics["assignments"] += 1
+        metrics["held_for_review_labels"] += held
+        assigned_ids.add(label_id)
         assigned_slugs.add(slug)
     return metrics
 
@@ -470,6 +507,8 @@ def enrich_video_candidates(
                     "chapter_boundaries_reordered": result.chapter_boundaries_reordered,
                     "chapter_boundaries_deduplicated": result.chapter_boundaries_deduplicated,
                     "chapter_boundaries_realigned": result.chapter_boundaries_realigned,
+                    "short_chapters_merged": result.short_chapters_merged,
+                    "seam_chapters_merged": result.seam_chapters_merged,
                     "categories_dropped": result.categories_dropped,
                     "category_rejections": result.category_rejections,
                     "evidence_overlap_violations": result.evidence_overlap_violations,
@@ -480,7 +519,7 @@ def enrich_video_candidates(
         if getattr(config, "ARCHIVE_ENRICHMENT_AUTO_APPROVE", False):
             from .enrichment_publication import approve_run, invalidate_enrichment_views
 
-            metrics["publication"] = approve_run(db, run_id)
+            metrics["publication"] = approve_run(db, run_id, model=config.ARCHIVE_ENRICHMENT_MODEL)
             deps.finish_run(db, run_id, "completed", metrics)
         db.commit()
         if getattr(config, "ARCHIVE_ENRICHMENT_AUTO_APPROVE", False):

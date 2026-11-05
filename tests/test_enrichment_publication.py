@@ -170,6 +170,75 @@ def test_approval_preserves_hidden_topic_assignments(cohort):
     )
 
 
+@pytest.mark.parametrize("topic", [False, True])
+def test_approval_accepts_a_run_without_categories(cohort, topic):
+    db, make = cohort
+    ids = make()
+    if topic:
+        db.execute(
+            text(
+                """UPDATE archive_label_assignments SET evidence=jsonb_build_array(jsonb_build_object('extractor','llm')),
+                component_scores=jsonb_build_object('llm_grounded',1.0) WHERE id=:assignment"""
+            ),
+            ids,
+        )
+        metrics = {"assignments": 1, "categories": 0}
+    else:
+        db.execute(text("DELETE FROM archive_label_assignments WHERE id=:assignment"), ids)
+        metrics = {"assignments": 0, "categories": 0}
+    db.execute(
+        text("UPDATE archive_extraction_runs SET metrics=metrics || CAST(:metrics AS jsonb) WHERE id=:run"),
+        {**ids, "metrics": json.dumps(metrics)},
+    )
+    result = approve_run(db, ids["run"])
+    assert result["status"] == "approved"
+    assert result["chapters"] == 2
+    assert result["assignments"] == int(topic)
+
+
+def test_approval_uses_the_configured_enrichment_model(cohort, monkeypatch):
+    from app.settings import settings
+
+    db, make = cohort
+    ids = make()
+    db.execute(text("UPDATE archive_extraction_runs SET model_name='other/model-v2' WHERE id=:run"), ids)
+    with pytest.raises(ValueError), db.begin_nested():
+        approve_run(db, ids["run"])
+    monkeypatch.setattr(settings, "ARCHIVE_ENRICHMENT_MODEL", "other/model-v2")
+    assert approve_run(db, ids["run"])["status"] == "approved"
+
+
+def test_approval_leaves_quality_review_labels_unapproved(cohort):
+    db, make = cohort
+    ids = make()
+    held = str(uuid.uuid4())
+    db.execute(
+        text(
+            "INSERT INTO archive_labels(id,slug,label,kind,source) VALUES (:id,:slug,'union vote','topic','automatic')"
+        ),
+        {"id": held, "slug": uuid.uuid4().hex},
+    )
+    db.execute(
+        text("""INSERT INTO archive_label_assignments(video_id,label_id,run_id,source,status,publish_tier,unit_type,
+                assignment_key,component_scores)
+            VALUES (:video,:label,:run,'llm','candidate','bronze','vod',gen_random_uuid()::text,
+                jsonb_build_object('llm_grounded',1.0,'quality_review',1.0))"""),
+        {**ids, "label": held},
+    )
+    db.execute(
+        text("UPDATE archive_extraction_runs SET metrics=jsonb_set(metrics,'{assignments}','2') WHERE id=:run"), ids
+    )
+    result = approve_run(db, ids["run"])
+    assert result["assignments"] == 1
+    assert result["held_for_review_assignments"] == 1
+    assert db.execute(text("SELECT status FROM archive_labels WHERE id=:id"), {"id": held}).scalar_one() == "candidate"
+    assert (
+        db.execute(text("SELECT status FROM archive_label_assignments WHERE label_id=:id"), {"id": held}).scalar_one()
+        == "candidate"
+    )
+    assert db.execute(text("SELECT status FROM archive_labels WHERE id=:label"), ids).scalar_one() == "published"
+
+
 @pytest.mark.parametrize(
     "defect",
     [

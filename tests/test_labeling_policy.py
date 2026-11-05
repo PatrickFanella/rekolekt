@@ -99,3 +99,16 @@ def test_policy_require_existing_canonical_blocks_gold_for_non_existing():
     }
 
     assert classify_candidate(candidate, policy, existing_canonical=False) == ("bronze", "candidate")
+
+
+def test_policy_respects_explicit_zero_thresholds():
+    candidate = {"confidence_score": 0.5, "evidence_count": 1, "distinct_videos": 1}
+    policy = {
+        "min_publish_score": 0,
+        "min_review_score": 0,
+        "min_evidence_count": 0,
+        "min_distinct_videos": 0,
+        "auto_publish_enabled": True,
+    }
+
+    assert classify_candidate(candidate, policy, existing_canonical=False) == ("gold", "auto_published")

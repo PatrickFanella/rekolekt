@@ -12,7 +12,11 @@ from app.archive.enrichment_service import (
     enrich_video_candidates,
     persist_enrichment_candidates,
 )
-from app.archive.openrouter_enrichment import EpisodeEnrichmentCandidate, OpenRouterEpisodeResult
+from app.archive.openrouter_enrichment import (
+    EpisodeCategoryCandidate,
+    EpisodeEnrichmentCandidate,
+    OpenRouterEpisodeResult,
+)
 
 
 @pytest.mark.parametrize("provider", [None, "", "alibaba", "deepinfra/fp8"])
@@ -81,6 +85,9 @@ class _Result:
 
     def first(self):
         return self._first
+
+    def all(self):
+        return []
 
 
 class _Db:
@@ -273,6 +280,9 @@ def test_persist_enrichment_writes_review_candidates_with_grounded_labels():
         "assignments": 5,
         "skipped_ungrounded_labels": 1,
         "skipped_duplicate_labels": 0,
+        "skipped_refused_labels": 0,
+        "skipped_low_quality_labels": 0,
+        "held_for_review_labels": 0,
     }
 
 
@@ -360,7 +370,8 @@ def test_enrich_video_generates_v4_pro_candidates_and_records_run(monkeypatch, a
         invalidations.append(video_id)
         return True
 
-    def approve(db, run):
+    def approve(db, run, *, model):
+        assert model == "deepseek/deepseek-v4-pro"
         assert persisted and finished[-1]["status"] == "completed"
         approvals.append(run)
         return {"status": "approved", "run_id": run}
@@ -387,7 +398,6 @@ def test_enrich_video_generates_v4_pro_candidates_and_records_run(monkeypatch, a
     [
         (0, "per-video limit"),
         (1, "does not overlap"),
-        (0, "no sustained categories"),
         (0, "incomplete chapter coverage"),
         (0, "unsupported chapter evidence"),
     ],
@@ -438,8 +448,6 @@ def test_enrich_video_rejects_invalid_results_before_persistence(overlap_violati
     finished = []
     persisted = []
     result = result.model_copy(update={"evidence_overlap_violations": overlap_violations})
-    if error_message == "no sustained categories":
-        result = result.model_copy(update={"candidate": result.candidate.model_copy(update={"categories": []})})
     if error_message == "incomplete chapter coverage":
         result = result.model_copy(update={"window_count": 2})
     if error_message == "unsupported chapter evidence":
@@ -483,3 +491,175 @@ def test_enrich_video_rejects_invalid_results_before_persistence(overlap_violati
     assert finished[0]["metrics"]["prompt_version"] == "archive-episode-enrichment-v7"
     assert [call[0] for call in db.calls].count("ROLLBACK") == 1
     assert [call[0] for call in db.calls].count("COMMIT") == 2
+
+
+def test_persist_enrichment_publishes_grounded_topics_drops_noise_and_holds_junk_signals():
+    text_value = "Chat, the stream: Donald Trump on the Gaza ceasefire, then labor organizing and the union vote."
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_200_000,
+        blocks=[
+            {"block_index": 0, "start_ms": 0, "end_ms": 600_000, "text": text_value},
+            {"block_index": 1, "start_ms": 600_000, "end_ms": 1_200_000, "text": text_value},
+        ],
+    )
+    result = OpenRouterEpisodeResult(
+        video_id="video-1",
+        model="deepseek/deepseek-v4-pro",
+        provider="provider",
+        prompt_version="prompt-v1",
+        candidate=EpisodeEnrichmentCandidate(
+            subjects=["Donald Trump", "Gaza ceasefire", "labor organizing", "stream", "chat"],
+            keywords=["the union vote"],
+            categories=[{"slug": "politics", "evidence_block_indexes": [0, 1]}],
+            chapters=[
+                {
+                    "start_ms": 0,
+                    "title": "Trump and the Gaza ceasefire",
+                    "summary": "The Gaza ceasefire.",
+                    "evidence_block_indexes": [0],
+                },
+                {
+                    "start_ms": 600_000,
+                    "title": "Labor organizing and a union vote",
+                    "summary": "A union vote.",
+                    "evidence_block_indexes": [1],
+                },
+            ],
+        ),
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost_usd=0.01,
+        elapsed_seconds=1.0,
+    )
+    assignments = []
+    metrics = persist_enrichment_candidates(
+        _Db(),
+        episode,
+        result,
+        run_id="run-1",
+        dependencies=EnrichmentPersistenceDependencies(
+            upsert_label=lambda _db, **kwargs: kwargs["label"],
+            insert_assignment=lambda _db, **kwargs: assignments.append(kwargs),
+        ),
+    )
+    by_label = {item["label_id"]: item for item in assignments}
+    assert set(by_label) == {"Politics", "Donald Trump", "Gaza ceasefire", "labor organizing", "the union vote"}
+    for label in ("Donald Trump", "Gaza ceasefire", "labor organizing"):
+        assert "quality_review" not in by_label[label]["component_scores"], label
+    # "the union vote" carries a weak-opener signal, so approval leaves it for an editor.
+    assert by_label["the union vote"]["component_scores"]["quality_review"] == 1.0
+    assert all(item["status"] == "candidate" for item in assignments)
+    assert metrics["skipped_low_quality_labels"] == 2
+    assert metrics["held_for_review_labels"] == 1
+
+
+def _grounding_result(episode, chapters):
+    return OpenRouterEpisodeResult(
+        video_id=episode.video_id,
+        model="model",
+        provider="provider",
+        prompt_version="prompt-v1",
+        candidate=EpisodeEnrichmentCandidate(
+            subjects=["placeholder"], keywords=["placeholder"], categories=[], chapters=chapters
+        ),
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost_usd=0.0,
+        elapsed_seconds=1.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "label,grounded",
+    [
+        ("Trump's tariffs", True),
+        ("Israel-Gaza war", True),
+        ("tenant unions", True),
+        ("money", False),
+        ("ceasefire", True),
+        ("unsupported invention", False),
+    ],
+)
+def test_label_grounding_normalizes_text_and_searches_all_blocks(label, grounded):
+    from app.archive.enrichment_service import _grounded_label_evidence
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_800_000,
+        blocks=[
+            {
+                "block_index": 0,
+                "start_ms": 0,
+                "end_ms": 600_000,
+                "text": "Opening chatter about money and a ceasefire.",
+            },
+            {
+                "block_index": 1,
+                "start_ms": 600_000,
+                "end_ms": 1_200_000,
+                "text": "Trump tariffs hit imports; the tenant union met again.",
+            },
+            {
+                "block_index": 2,
+                "start_ms": 1_200_000,
+                "end_ms": 1_800_000,
+                "text": "The Israel Gaza war and the ceasefire talks.",
+            },
+        ],
+    )
+    chapters = [
+        {"start_ms": 0, "title": "Opening segment", "summary": "Opening chatter.", "evidence_block_indexes": [0]},
+        {"start_ms": 900_000, "title": "Closing segment", "summary": "Closing talk.", "evidence_block_indexes": [0]},
+    ]
+    evidence = _grounded_label_evidence(label, episode, _grounding_result(episode, chapters))
+    assert bool(evidence) is grounded
+
+
+def test_coverage_gate_accepts_contiguous_chapters_without_a_seam_start():
+    from app.archive.enrichment_service import validate_generated_candidates
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=6_000_000,
+        blocks=[
+            {"block_index": 0, "start_ms": 0, "end_ms": 3_000_000, "text": "Opening topic."},
+            {"block_index": 1, "start_ms": 3_000_000, "end_ms": 6_000_000, "text": "Long second topic."},
+        ],
+    )
+    result = _grounding_result(
+        episode,
+        [
+            {"start_ms": 0, "title": "Opening topic", "summary": "The opening topic.", "evidence_block_indexes": [0]},
+            {
+                "start_ms": 2_400_000,
+                "title": "Long second topic",
+                "summary": "The second topic.",
+                "evidence_block_indexes": [1],
+            },
+        ],
+    )
+    candidate = result.candidate.model_copy(
+        update={"categories": [EpisodeCategoryCandidate(slug="politics", evidence_block_indexes=[0, 1])]}
+    )
+    result = result.model_copy(update={"window_count": 2, "candidate": candidate})
+    validate_generated_candidates(episode, result, SimpleNamespace(ARCHIVE_ENRICHMENT_MAX_WINDOW_MINUTES=90))
+
+
+def test_generation_gate_accepts_a_run_without_categories():
+    from app.archive.enrichment_service import validate_generated_candidates
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_200_000,
+        blocks=[{"block_index": 0, "start_ms": 0, "end_ms": 1_200_000, "text": "A long chat about cooking."}],
+    )
+    chapters = [
+        {
+            "start_ms": 0,
+            "title": "Cooking discussion",
+            "summary": "A long chat about cooking.",
+            "evidence_block_indexes": [0],
+        }
+    ]
+    validate_generated_candidates(episode, _grounding_result(episode, chapters), SimpleNamespace())
