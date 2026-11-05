@@ -12,6 +12,8 @@ from typing import Any
 
 from sqlalchemy import text
 
+from app.settings import settings
+
 from .chapter_review import review_chapter_set
 from .openrouter_enrichment import PROMPT_VERSION
 
@@ -35,19 +37,25 @@ def invalidate_enrichment_views(video_id: str | None = None) -> bool:
     return True
 
 
-def approve_run(db: Any, run_id: str) -> dict[str, Any]:
+def approve_run(db: Any, run_id: str, *, model: str | None = None) -> dict[str, Any]:
+    """Approve a completed run of the configured enrichment model and prompt."""
     run = (
         db.execute(
             text("""SELECT * FROM archive_extraction_runs WHERE id=:id AND status='completed'
-            AND model_name='deepseek/deepseek-v4-pro' AND prompt_version=:prompt
+            AND model_name=:model AND prompt_version=:prompt
             AND started_at>=CAST(:cutoff AS timestamptz) FOR UPDATE"""),
-            {"id": run_id, "prompt": PROMPT_VERSION, "cutoff": QUALITY_CUTOFF},
+            {
+                "id": run_id,
+                "model": model or settings.ARCHIVE_ENRICHMENT_MODEL,
+                "prompt": PROMPT_VERSION,
+                "cutoff": QUALITY_CUTOFF,
+            },
         )
         .mappings()
         .one_or_none()
     )
     if run is None:
-        raise ValueError("Only successful post-PR28 DeepSeek runs may be approved")
+        raise ValueError("Only successful post-PR28 runs of the configured enrichment model may be approved")
     if db.execute(text("SELECT 1 FROM archive_enrichment_approvals WHERE run_id=:id"), {"id": run_id}).scalar():
         return {"status": "already_approved", "run_id": run_id}
     video_id = str(run["video_id"])

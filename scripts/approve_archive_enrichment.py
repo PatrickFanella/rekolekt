@@ -22,6 +22,7 @@ from app.archive.enrichment_publication import QUALITY_CUTOFF, approve_run, inva
 from app.archive.enrichment_queue import OWNER_LOCK
 from app.archive.openrouter_enrichment import PROMPT_VERSION
 from app.db import engine
+from app.settings import settings
 
 
 def run_maintenance(db: Session) -> dict:
@@ -40,11 +41,11 @@ def run_maintenance(db: Session) -> dict:
     runs = (
         db.execute(
             text("""SELECT r.id FROM archive_extraction_runs r
-        WHERE r.status='completed' AND r.model_name='deepseek/deepseek-v4-pro' AND r.prompt_version=:prompt
+        WHERE r.status='completed' AND r.model_name=:model AND r.prompt_version=:prompt
         AND r.started_at>=CAST(:cutoff AS timestamptz)
         AND EXISTS(SELECT 1 FROM archive_video_chapters c WHERE c.run_id=r.id)
         ORDER BY r.started_at,r.id"""),
-            {"cutoff": QUALITY_CUTOFF, "prompt": PROMPT_VERSION},
+            {"cutoff": QUALITY_CUTOFF, "prompt": PROMPT_VERSION, "model": settings.ARCHIVE_ENRICHMENT_MODEL},
         )
         .scalars()
         .all()

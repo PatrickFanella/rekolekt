@@ -516,7 +516,7 @@ def enrich_video_candidates(
         if getattr(config, "ARCHIVE_ENRICHMENT_AUTO_APPROVE", False):
             from .enrichment_publication import approve_run, invalidate_enrichment_views
 
-            metrics["publication"] = approve_run(db, run_id)
+            metrics["publication"] = approve_run(db, run_id, model=config.ARCHIVE_ENRICHMENT_MODEL)
             deps.finish_run(db, run_id, "completed", metrics)
         db.commit()
         if getattr(config, "ARCHIVE_ENRICHMENT_AUTO_APPROVE", False):

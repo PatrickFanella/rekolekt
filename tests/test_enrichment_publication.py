@@ -196,6 +196,18 @@ def test_approval_accepts_a_run_without_categories(cohort, topic):
     assert result["assignments"] == int(topic)
 
 
+def test_approval_uses_the_configured_enrichment_model(cohort, monkeypatch):
+    from app.settings import settings
+
+    db, make = cohort
+    ids = make()
+    db.execute(text("UPDATE archive_extraction_runs SET model_name='other/model-v2' WHERE id=:run"), ids)
+    with pytest.raises(ValueError), db.begin_nested():
+        approve_run(db, ids["run"])
+    monkeypatch.setattr(settings, "ARCHIVE_ENRICHMENT_MODEL", "other/model-v2")
+    assert approve_run(db, ids["run"])["status"] == "approved"
+
+
 def test_approval_leaves_quality_review_labels_unapproved(cohort):
     db, make = cohort
     ids = make()

@@ -370,7 +370,8 @@ def test_enrich_video_generates_v4_pro_candidates_and_records_run(monkeypatch, a
         invalidations.append(video_id)
         return True
 
-    def approve(db, run):
+    def approve(db, run, *, model):
+        assert model == "deepseek/deepseek-v4-pro"
         assert persisted and finished[-1]["status"] == "completed"
         approvals.append(run)
         return {"status": "approved", "run_id": run}
