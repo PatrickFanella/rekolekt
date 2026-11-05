@@ -180,6 +180,48 @@ Second segment
         assert result[1].end == 10.0
         assert result[1].text == "Second segment"
 
+    def test_parse_vtt_cue_settings_and_inline_tags(self):
+        """Cue settings after the timestamp and inline word timing tags are ignored."""
+        vtt_content = b"""WEBVTT
+
+00:00:01.000 --> 00:00:03.000 align:start position:0%
+hello<00:00:01.500><c> world</c>
+"""
+        result = _parse_vtt_to_segments(vtt_content)
+
+        assert len(result) == 1
+        assert result[0].start == 1.0
+        assert result[0].end == 3.0
+        assert result[0].text == "hello world"
+
+    def test_parse_vtt_drops_rolling_caption_duplicates(self):
+        """A cue whose text is repeated at the start of the next cue is dropped."""
+        vtt_content = b"""WEBVTT
+
+00:00:01.000 --> 00:00:02.000
+hello world
+
+00:00:02.000 --> 00:00:04.000
+hello world this is next
+
+00:00:04.000 --> 00:00:06.000
+something else
+
+00:00:06.000 --> 00:00:07.000
+I
+
+00:00:07.000 --> 00:00:08.000
+In the end
+"""
+        result = _parse_vtt_to_segments(vtt_content)
+
+        assert [(s.start, s.end, s.text) for s in result] == [
+            (1.0, 4.0, "hello world this is next"),
+            (4.0, 6.0, "something else"),
+            (6.0, 7.0, "I"),
+            (7.0, 8.0, "In the end"),
+        ]
+
     def test_parse_vtt_with_cue_ids(self):
         """Test parsing VTT with cue identifiers."""
         vtt_content = b"""WEBVTT

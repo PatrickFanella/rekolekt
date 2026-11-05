@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -14,6 +15,8 @@ from app.schemas import (
 from worker.formatter import TranscriptFormatter
 
 from .types import TranscriptSegment
+
+_FILLER_STAT_RE = re.compile(r"\b(?:um|uh|er)\b", re.IGNORECASE)
 
 
 def _cleaned_formatter_config() -> dict[str, object]:
@@ -111,10 +114,8 @@ class TranscriptPresentationService:
                     likely_hallucination=False,
                 )
             )
-        orig_filler_count = sum(1 for s in segments if any(f in s.text.lower() for f in ["um", "uh", "er"]))
-        cleaned_filler_count = sum(
-            1 for s in formatted_segments if any(f in s["text"].lower() for f in ["um", "uh", "er"])
-        )
+        orig_filler_count = sum(1 for s in segments if _FILLER_STAT_RE.search(s.text))
+        cleaned_filler_count = sum(1 for s in formatted_segments if _FILLER_STAT_RE.search(s["text"]))
         orig_token_count = sum(1 for s in segments if any(t in s.text for t in ["[MUSIC]", "[APPLAUSE]", "[LAUGHTER]"]))
         cleaned_token_count = sum(
             1 for s in formatted_segments if any(t in s["text"] for t in ["[MUSIC]", "[APPLAUSE]", "[LAUGHTER]"])

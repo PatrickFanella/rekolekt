@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import shlex
 import subprocess
 import tempfile
@@ -441,8 +442,8 @@ def _download_caption_with_ytdlp(url: str, youtube_id: str, track: YTCaptionTrac
 
 def _parse_vtt_to_segments(vtt_bytes: bytes) -> List[YTSegment]:
     def parse_ts(ts: str) -> float:
-        # HH:MM:SS.mmm or MM:SS.mmm
-        ts = ts.strip()
+        # HH:MM:SS.mmm or MM:SS.mmm, optionally followed by cue settings
+        ts = ts.strip().split()[0]
         parts = ts.split(":")
         if len(parts) == 3:
             h, m, s = parts
@@ -495,10 +496,21 @@ def _parse_vtt_to_segments(vtt_bytes: bytes) -> List[YTSegment]:
         # consume blank
         while i < len(text) and text[i].strip() == "":
             i += 1
-        cue = " ".join(lines).strip()
+        # Drop inline word-timing and styling tags such as <00:00:01.500><c>
+        cue = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", " ".join(lines))).strip()
         if cue:
             segs.append(YTSegment(start=start, end=end, text=cue))
-    return segs
+
+    # Rolling auto captions repeat a cue at the start of the next one; keep the
+    # longer cue and give it the earlier start time.
+    deduped: List[YTSegment] = []
+    for seg in segs:
+        previous = deduped[-1].text if deduped else None
+        if previous is not None and (seg.text == previous or seg.text.startswith(previous + " ")):
+            seg = YTSegment(start=deduped[-1].start, end=seg.end, text=seg.text)
+            deduped.pop()
+        deduped.append(seg)
+    return deduped
 
 
 def _fetch_youtube_auto_captions_impl(youtube_id: str) -> Optional[tuple[YTCaptionTrack, List[YTSegment]]]:

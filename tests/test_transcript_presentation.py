@@ -46,3 +46,12 @@ def test_cleaned_config_reports_formatter_internal_punctuation_setting():
     response = service.present_cleaned(uuid.uuid4(), [service.from_db_row((0, 1, "hello", None))])
 
     assert response.cleanup_config.add_internal_punctuation is True
+
+
+def test_cleaned_filler_stats_count_whole_words_only():
+    service = TranscriptPresentationService()
+    segments = [service.from_db_row((0, 1000, "um never mind", None))]
+
+    response = service.present_cleaned(uuid.uuid4(), segments)
+
+    assert response.stats.fillers_removed == 1
