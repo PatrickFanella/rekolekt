@@ -22,7 +22,7 @@ search.addEventListener('input', () => {
     copy.append(document.createTextNode(text.slice(cursor)));
   });
   document.querySelector('#search-status').textContent = query
-    ? (matches ? `${matches} matching ${matches === 1 ? 'word' : 'words'} in this example.` : 'No matches here. Try “broadcasting” or “people”.')
+    ? (matches ? `${matches} ${matches === 1 ? 'match' : 'matches'} in this example.` : 'No matches here. Try “broadcasting” or “people”.')
     : 'Three transcript segments from the same recording.';
 });
 passages.forEach((passage) => passage.addEventListener('click', () => {
@@ -46,6 +46,7 @@ document.querySelector('#copy-passage').addEventListener('click', async () => {
     status.textContent = `Passage link copied for ${selected.dataset.time}.`;
     document.querySelector('#copy-passage').textContent = 'Link copied';
   } catch {
+    document.querySelector('#copy-passage').textContent = 'Copy passage link';
     status.replaceChildren(document.createTextNode('Clipboard unavailable. Copy this link: '));
     const link = document.createElement('a');
     link.href = selected.dataset.passageUrl;
