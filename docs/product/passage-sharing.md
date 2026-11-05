@@ -48,9 +48,9 @@ link back to the editable range. Reads bypass transcript and video caches, and r
 use `no-store` so deleting a source prevents future application responses. External social
 platform caches cannot be recalled. Set the flag to false for private deployments.
 
-Downloadable media clips are a separate feature requiring an authorized source,
-source-transcript alignment, rendering, access controls, retention and expiry. Transcript
-exports do not produce video clips.
+Downloadable media clips use the opt-in [YouTube clip exporter](youtube-clips.md)
+or [registered local originals](authorized-original-clips.md). Saved ranges survive
+media expiry and can be exported again. Transcript exports do not produce video clips.
 
 ## Verification
 

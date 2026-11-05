@@ -151,6 +151,8 @@ class Settings(BaseSettings):
     CLIP_EXPORTS_ENABLED: bool = False
     CLIP_ORIGINALS_ROOT: str = ""
     CLIP_SPOOL_DIR: str = ""
+    CLIP_EXPORT_SOURCE: Literal["original", "youtube"] = "original"
+    CLIP_CACHE_TTL_SECONDS: int = Field(default=3600, ge=60, le=86400)
     ATPROTO_ENABLED: bool = False
     ATPROTO_HANDLE_RESOLVER: str = "https://bsky.social"
     SITE_DESCRIPTION: str = Field(

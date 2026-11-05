@@ -1,0 +1,33 @@
+# Opt-in overlay: API and worker must share the private spool. Existing data services are unchanged.
+services:
+  api:
+    user: '10001:10001'
+    depends_on:
+      clip-worker:
+        condition: service_started
+    environment:
+      CLIP_EXPORTS_ENABLED: 'true'
+      CLIP_EXPORT_SOURCE: youtube
+      CLIP_SPOOL_DIR: /clip-spool
+      CLIP_CACHE_TTL_SECONDS: ${CLIP_CACHE_TTL_SECONDS:-3600}
+    volumes:
+      - clip-spool:/clip-spool
+  clip-worker:
+    build:
+      context: ${TRANSCRIPT_CORE_DIR:-.}
+      dockerfile: Dockerfile.clips
+    environment:
+      CLIP_CACHE_TTL_SECONDS: ${CLIP_CACHE_TTL_SECONDS:-3600}
+    volumes:
+      - clip-spool:/spool
+    init: true
+    restart: unless-stopped
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  clip-spool:

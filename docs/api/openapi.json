@@ -11097,6 +11097,50 @@
         ]
       }
     },
+    "/clips/from-favorite/{favorite_id}": {
+      "post": {
+        "description": "Reuse a cached export or regenerate it from a saved range. The favorite never expires.",
+        "operationId": "export_favorite_clips_from_favorite__favorite_id__post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "favorite_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Favorite Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipStatus"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Export Favorite",
+        "tags": [
+          "Original clip exports"
+        ]
+      }
+    },
     "/clips/{job_id}": {
       "get": {
         "operationId": "clip_status_clips__job_id__get",
