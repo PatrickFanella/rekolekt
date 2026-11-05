@@ -953,3 +953,27 @@ def test_hierarchical_merge_folds_short_chapters_after_concatenation():
     )
     assert [chapter.start_ms for chapter in result.candidate.chapters] == [0, 3_000_000, 4_500_000]
     assert result.short_chapters_merged == 1
+
+
+@pytest.mark.parametrize(
+    "seam_title,merged",
+    [
+        ("The Gaza ceasefire talks", True),
+        ("Gaza ceasefire talks continue", True),
+        ("Housing costs in New York", False),
+    ],
+)
+def test_hierarchical_merge_joins_a_seam_that_continues_the_same_topic(seam_title, merged):
+    def chapters(index, window):
+        if index == 0:
+            return [(0, "Opening discussion"), (window.duration_ms // 2, "Gaza Ceasefire Talks")]
+        return [(0, seam_title), (window.duration_ms // 2, "Later topic")]
+
+    result = generate_hierarchical_openrouter_enrichment(
+        _windowed_episode(), generate_window=_window_generator(chapters), max_window_ms=90 * 60_000
+    )
+    starts = [chapter.start_ms for chapter in result.candidate.chapters]
+    assert starts == ([0, 1_500_000, 4_500_000] if merged else [0, 1_500_000, 3_000_000, 4_500_000])
+    assert result.candidate.chapters[1].title == "Gaza Ceasefire Talks"
+    assert result.seam_chapters_merged == int(merged)
+    assert result.as_dict()["normalizations"]["seam_chapters_merged"] == int(merged)

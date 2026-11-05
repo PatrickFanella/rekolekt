@@ -13,7 +13,7 @@ from .enrichment_exporter import export_enrichment_input
 from .enrichment_preflight import validate_enrichment_input
 from .enrichment_queue import OWNER_LOCK
 from .enrichment_runner import EpisodeInput
-from .labeling.normalization import normalized_alias, slugify_label
+from .labeling.normalization import folded_terms, slugify_label
 from .labeling.quality import assess_label_quality
 from .labeling.repository import (
     create_extraction_run,
@@ -58,8 +58,10 @@ def validate_generated_candidates(episode: EpisodeInput, result: OpenRouterEpiso
     windows = max(
         1, math.ceil(episode.duration_ms / (getattr(config, "ARCHIVE_ENRICHMENT_MAX_WINDOW_MINUTES", 90) * 60_000))
     )
-    expected = {round(index * episode.duration_ms / windows) for index in range(windows)}
-    if result.window_count != windows or not expected <= set(starts) or starts != sorted(set(starts)):
+    # Every window must have been generated, and the chapters must tile the
+    # episode from zero. Window seams need not be chapter starts: a topic that
+    # continues across a seam is merged into one chapter.
+    if result.window_count != windows or not starts or starts[0] != 0 or starts != sorted(set(starts)):
         raise RuntimeError("archive enrichment quality gate: incomplete chapter coverage")
     blocks = {block.block_index: block for block in episode.blocks}
     for index, chapter in enumerate(chapters):
@@ -125,23 +127,8 @@ def validate_stored_candidates(db: Any, video_id: str, run_id: str, metrics: dic
 _LABEL_STOPWORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "the", "to", "with"}
 
 
-def _fold_term(term: str) -> str:
-    """Fold simple plurals so "tariffs" matches "tariff"."""
-    if len(term) > 4 and term.endswith("ies"):
-        return term[:-3] + "y"
-    if len(term) > 3 and term.endswith("s") and not term.endswith(("ss", "us", "is")):
-        return term[:-1]
-    return term
-
-
 def _tokens(value: str) -> set[str]:
-    # normalized_alias splits on apostrophes and hyphens: "Trump's" -> "trump s".
-    terms = normalized_alias(value).split()
-    return {
-        _fold_term(term)
-        for index, term in enumerate(terms)
-        if term not in _LABEL_STOPWORDS and not (term == "s" and index > 0)
-    }
+    return {term for term in folded_terms(value) if term not in _LABEL_STOPWORDS}
 
 
 def _grounded_label_evidence(
@@ -520,6 +507,7 @@ def enrich_video_candidates(
                     "chapter_boundaries_deduplicated": result.chapter_boundaries_deduplicated,
                     "chapter_boundaries_realigned": result.chapter_boundaries_realigned,
                     "short_chapters_merged": result.short_chapters_merged,
+                    "seam_chapters_merged": result.seam_chapters_merged,
                     "categories_dropped": result.categories_dropped,
                     "category_rejections": result.category_rejections,
                     "evidence_overlap_violations": result.evidence_overlap_violations,

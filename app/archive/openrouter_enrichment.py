@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_valida
 from .enrichment_runner import EpisodeInput, TranscriptBlockInput
 from .intelligence_queries.topics import alias_matches_text
 from .labeling.benchmark import EpisodePrediction, PredictedChapter
+from .labeling.normalization import folded_terms
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
 PROMPT_VERSION = "archive-episode-enrichment-v7"
@@ -247,6 +248,7 @@ class OpenRouterEpisodeResult(BaseModel):
     category_rejections: list[dict[str, str]] = Field(default_factory=list)
     evidence_overlap_violations: int = 0
     short_chapters_merged: int = 0
+    seam_chapters_merged: int = 0
     window_count: int = 1
 
     def prediction(self, duration_ms: int) -> EpisodePrediction:
@@ -287,6 +289,7 @@ class OpenRouterEpisodeResult(BaseModel):
                 "categories_dropped": self.categories_dropped,
                 "category_rejections": self.category_rejections,
                 "short_chapters_merged": self.short_chapters_merged,
+                "seam_chapters_merged": self.seam_chapters_merged,
             },
             "validation": {"evidence_overlap_violations": self.evidence_overlap_violations},
             "window_count": self.window_count,
@@ -476,6 +479,17 @@ def _overlap_violations(
 def _absorb(kept: EpisodeChapterCandidate, other: EpisodeChapterCandidate, **update: Any) -> EpisodeChapterCandidate:
     evidence = list(dict.fromkeys([*kept.evidence_block_indexes, *other.evidence_block_indexes]))[:3]
     return kept.model_copy(update={"evidence_block_indexes": evidence, **update})
+
+
+_TITLE_STOPWORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "the", "to", "with"}
+
+
+def _same_topic(first: str, second: str) -> bool:
+    """Titles name one topic if their content terms match or one contains the other."""
+    first_terms = {term for term in folded_terms(first) if term not in _TITLE_STOPWORDS}
+    second_terms = {term for term in folded_terms(second) if term not in _TITLE_STOPWORDS}
+    smaller, larger = sorted((first_terms, second_terms), key=len)
+    return bool(smaller) and (smaller == larger or (len(smaller) >= 2 and smaller <= larger))
 
 
 def _merge_short_chapters(
@@ -957,11 +971,18 @@ def generate_hierarchical_openrouter_enrichment(
         raise ValueError("hierarchical enrichment windows must use one model and prompt version")
 
     chapters: list[EpisodeChapterCandidate] = []
+    seam_chapters_merged = 0
     for offset_ms, result in window_results:
-        chapters.extend(
+        window_chapters = [
             chapter.model_copy(update={"start_ms": offset_ms + chapter.start_ms})
             for chapter in result.candidate.chapters
-        )
+        ]
+        # Each window must start a chapter at its own origin. When that chapter
+        # continues the previous window's last topic, join them across the seam.
+        if chapters and _same_topic(chapters[-1].title, window_chapters[0].title):
+            chapters[-1] = _absorb(chapters[-1], window_chapters.pop(0))
+            seam_chapters_merged += 1
+        chapters.extend(window_chapters)
     chapters, short_chapters_merged = _merge_short_chapters(chapters, episode.duration_ms)
     category_counts: Counter[str] = Counter()
     category_evidence: dict[str, list[int]] = {}
@@ -1021,6 +1042,7 @@ def generate_hierarchical_openrouter_enrichment(
         chapter_boundaries_realigned=sum(result.chapter_boundaries_realigned for _offset, result in window_results),
         short_chapters_merged=short_chapters_merged
         + sum(result.short_chapters_merged for _offset, result in window_results),
+        seam_chapters_merged=seam_chapters_merged,
         window_count=len(window_results),
     )
 

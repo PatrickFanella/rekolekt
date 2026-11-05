@@ -387,7 +387,6 @@ verify_enrichment_canary_result() {
             WHERE c.status = 'candidate' AND c.source = 'automatic') >= 2 AS candidate_chapters,
           (SELECT min(c.start_ms) = 0 AND max(c.end_ms) = v.duration_seconds * 1000
               AND count(*) = count(DISTINCT c.start_ms)
-              AND count(*) FILTER (WHERE c.start_ms = round(v.duration_seconds * 1000 / 2.0)) >= 1
             FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id
             JOIN videos v ON v.id = c.video_id GROUP BY v.duration_seconds) AS chapter_coverage,
           NOT EXISTS (SELECT 1 FROM archive_video_chapters c JOIN target_run t ON t.id = c.run_id

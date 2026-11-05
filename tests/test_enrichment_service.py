@@ -12,7 +12,11 @@ from app.archive.enrichment_service import (
     enrich_video_candidates,
     persist_enrichment_candidates,
 )
-from app.archive.openrouter_enrichment import EpisodeEnrichmentCandidate, OpenRouterEpisodeResult
+from app.archive.openrouter_enrichment import (
+    EpisodeCategoryCandidate,
+    EpisodeEnrichmentCandidate,
+    OpenRouterEpisodeResult,
+)
 
 
 @pytest.mark.parametrize("provider", [None, "", "alibaba", "deepinfra/fp8"])
@@ -619,3 +623,33 @@ def test_label_grounding_normalizes_text_and_searches_all_blocks(label, grounded
     ]
     evidence = _grounded_label_evidence(label, episode, _grounding_result(episode, chapters))
     assert bool(evidence) is grounded
+
+
+def test_coverage_gate_accepts_contiguous_chapters_without_a_seam_start():
+    from app.archive.enrichment_service import validate_generated_candidates
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=6_000_000,
+        blocks=[
+            {"block_index": 0, "start_ms": 0, "end_ms": 3_000_000, "text": "Opening topic."},
+            {"block_index": 1, "start_ms": 3_000_000, "end_ms": 6_000_000, "text": "Long second topic."},
+        ],
+    )
+    result = _grounding_result(
+        episode,
+        [
+            {"start_ms": 0, "title": "Opening topic", "summary": "The opening topic.", "evidence_block_indexes": [0]},
+            {
+                "start_ms": 2_400_000,
+                "title": "Long second topic",
+                "summary": "The second topic.",
+                "evidence_block_indexes": [1],
+            },
+        ],
+    )
+    candidate = result.candidate.model_copy(
+        update={"categories": [EpisodeCategoryCandidate(slug="politics", evidence_block_indexes=[0, 1])]}
+    )
+    result = result.model_copy(update={"window_count": 2, "candidate": candidate})
+    validate_generated_candidates(episode, result, SimpleNamespace(ARCHIVE_ENRICHMENT_MAX_WINDOW_MINUTES=90))
