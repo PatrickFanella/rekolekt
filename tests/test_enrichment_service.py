@@ -557,3 +557,65 @@ def test_persist_enrichment_drops_noise_labels_and_holds_review_labels():
     assert all(item["status"] == "candidate" for item in assignments)
     assert metrics["skipped_low_quality_labels"] == 2
     assert metrics["held_for_review_labels"] == 1
+
+
+def _grounding_result(episode, chapters):
+    return OpenRouterEpisodeResult(
+        video_id=episode.video_id,
+        model="model",
+        provider="provider",
+        prompt_version="prompt-v1",
+        candidate=EpisodeEnrichmentCandidate(
+            subjects=["placeholder"], keywords=["placeholder"], categories=[], chapters=chapters
+        ),
+        prompt_tokens=1,
+        completion_tokens=1,
+        cost_usd=0.0,
+        elapsed_seconds=1.0,
+    )
+
+
+@pytest.mark.parametrize(
+    "label,grounded",
+    [
+        ("Trump's tariffs", True),
+        ("Israel-Gaza war", True),
+        ("tenant unions", True),
+        ("money", False),
+        ("ceasefire", True),
+        ("unsupported invention", False),
+    ],
+)
+def test_label_grounding_normalizes_text_and_searches_all_blocks(label, grounded):
+    from app.archive.enrichment_service import _grounded_label_evidence
+
+    episode = EpisodeInput(
+        video_id="video-1",
+        duration_ms=1_800_000,
+        blocks=[
+            {
+                "block_index": 0,
+                "start_ms": 0,
+                "end_ms": 600_000,
+                "text": "Opening chatter about money and a ceasefire.",
+            },
+            {
+                "block_index": 1,
+                "start_ms": 600_000,
+                "end_ms": 1_200_000,
+                "text": "Trump tariffs hit imports; the tenant union met again.",
+            },
+            {
+                "block_index": 2,
+                "start_ms": 1_200_000,
+                "end_ms": 1_800_000,
+                "text": "The Israel Gaza war and the ceasefire talks.",
+            },
+        ],
+    )
+    chapters = [
+        {"start_ms": 0, "title": "Opening segment", "summary": "Opening chatter.", "evidence_block_indexes": [0]},
+        {"start_ms": 900_000, "title": "Closing segment", "summary": "Closing talk.", "evidence_block_indexes": [0]},
+    ]
+    evidence = _grounded_label_evidence(label, episode, _grounding_result(episode, chapters))
+    assert bool(evidence) is grounded

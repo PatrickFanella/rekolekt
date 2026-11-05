@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import math
-import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -14,7 +13,7 @@ from .enrichment_exporter import export_enrichment_input
 from .enrichment_preflight import validate_enrichment_input
 from .enrichment_queue import OWNER_LOCK
 from .enrichment_runner import EpisodeInput
-from .labeling.normalization import slugify_label
+from .labeling.normalization import normalized_alias, slugify_label
 from .labeling.quality import assess_label_quality
 from .labeling.repository import (
     create_extraction_run,
@@ -126,8 +125,23 @@ def validate_stored_candidates(db: Any, video_id: str, run_id: str, metrics: dic
 _LABEL_STOPWORDS = {"a", "an", "and", "for", "from", "in", "of", "on", "the", "to", "with"}
 
 
+def _fold_term(term: str) -> str:
+    """Fold simple plurals so "tariffs" matches "tariff"."""
+    if len(term) > 4 and term.endswith("ies"):
+        return term[:-3] + "y"
+    if len(term) > 3 and term.endswith("s") and not term.endswith(("ss", "us", "is")):
+        return term[:-1]
+    return term
+
+
 def _tokens(value: str) -> set[str]:
-    return {token for token in re.findall(r"[a-z0-9'-]+", value.casefold()) if token not in _LABEL_STOPWORDS}
+    # normalized_alias splits on apostrophes and hyphens: "Trump's" -> "trump s".
+    terms = normalized_alias(value).split()
+    return {
+        _fold_term(term)
+        for index, term in enumerate(terms)
+        if term not in _LABEL_STOPWORDS and not (term == "s" and index > 0)
+    }
 
 
 def _grounded_label_evidence(
@@ -135,35 +149,31 @@ def _grounded_label_evidence(
     episode: EpisodeInput,
     result: OpenRouterEpisodeResult,
 ) -> list[dict[str, Any]]:
+    """Cite transcript blocks that contain every term of the label.
+
+    Search the whole transcript, not only chapter citations. A single-word
+    label must appear in at least two blocks, so one passing mention of a
+    generic word does not ground it.
+    """
     label_tokens = _tokens(label)
     if not label_tokens:
         return []
-    cited_indexes = list(
-        dict.fromkeys(
-            block_index for chapter in result.candidate.chapters for block_index in chapter.evidence_block_indexes
-        )
-    )
-    block_by_index = {block.block_index: block for block in episode.blocks}
-    evidence = []
-    for block_index in cited_indexes:
-        block = block_by_index.get(block_index)
-        if block is None or not label_tokens <= _tokens(block.text):
-            continue
-        evidence.append(
-            {
-                "extractor": "llm",
-                "video_id": episode.video_id,
-                "block_index": block.block_index,
-                "start_ms": block.start_ms,
-                "end_ms": block.end_ms,
-                "text": block.text[:500],
-                "model": result.model,
-                "prompt_version": result.prompt_version,
-            }
-        )
-        if len(evidence) == 3:
-            break
-    return evidence
+    supporting = [block for block in episode.blocks if label_tokens <= _tokens(block.text)]
+    if len(supporting) < (2 if len(label_tokens) == 1 else 1):
+        return []
+    return [
+        {
+            "extractor": "llm",
+            "video_id": episode.video_id,
+            "block_index": block.block_index,
+            "start_ms": block.start_ms,
+            "end_ms": block.end_ms,
+            "text": block.text[:500],
+            "model": result.model,
+            "prompt_version": result.prompt_version,
+        }
+        for block in supporting[:3]
+    ]
 
 
 def _assignable_label_id(
