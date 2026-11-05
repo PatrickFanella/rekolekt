@@ -37,3 +37,29 @@ def test_format_youtube_caption_text_returns_paragraph_text():
     assert "second caption sentence" in text
     assert "\n\n" in text
     assert "New paragraph starts" in text
+
+
+def test_youtube_caption_blocks_capitalize_standalone_i():
+    rows = [(0, 1000, "i think i'm right"), (1000, 2000, "and the wiki says i.e.")]
+
+    text = format_youtube_caption_text(rows)
+
+    assert text == "I think I'm right and the wiki says i.e."
+
+
+def test_youtube_caption_blocks_apply_archive_vocabulary_for_hasanara(monkeypatch):
+    rows = [(0, 1000, "Oliver Largan joined")]
+
+    monkeypatch.setattr("worker.vocabulary.settings.ARCHIVE_EDITORIAL_PRESET", "generic")
+    assert format_youtube_caption_text(rows) == "Oliver Largan joined."
+
+    monkeypatch.setattr("worker.vocabulary.settings.ARCHIVE_EDITORIAL_PRESET", "hasanara")
+    assert format_youtube_caption_text(rows) == "Oliver Larkin joined."
+
+
+def test_youtube_caption_blocks_keep_thank_you():
+    rows = [(0, 1000, "Thank you."), (5000, 6000, "ok")]
+
+    blocks = build_youtube_caption_blocks(rows)
+
+    assert [block.text for block in blocks] == ["Thank you.", "Ok."]
