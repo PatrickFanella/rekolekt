@@ -832,21 +832,33 @@ def generate_openrouter_episode_enrichment(
 
 
 def _rank_window_labels(values: list[list[str]], limit: int) -> list[str]:
-    counts: Counter[str] = Counter()
-    first_seen: dict[str, int] = {}
+    """Rank labels by how many windows name them, then by spread across windows.
+
+    Remaining ties go to the label's best position within a window and then
+    to window order, so each window's leading labels interleave instead of the
+    first window filling the cap. Variants that fold to one form ("Trump's
+    tariffs", "Trump tariffs") count as one label.
+    """
+    support: Counter[str] = Counter()
+    windows: dict[str, list[int]] = {}
+    position: dict[str, int] = {}
     display: dict[str, str] = {}
-    position = 0
-    for group in values:
-        for value in dict.fromkeys(group):
-            normalized = " ".join(value.casefold().split())
-            if not normalized:
+    for window_index, group in enumerate(values):
+        seen: set[str] = set()
+        for rank, value in enumerate(group):
+            key = " ".join(folded_terms(value))
+            if not key or key in seen:
                 continue
-            counts[normalized] += 1
-            first_seen.setdefault(normalized, position)
-            display.setdefault(normalized, value)
-            position += 1
-    ranked = sorted(counts, key=lambda value: (-counts[value], first_seen[value], value))
-    return [display[value] for value in ranked[:limit]]
+            seen.add(key)
+            support[key] += 1
+            windows.setdefault(key, []).append(window_index)
+            position[key] = min(position.get(key, rank), rank)
+            display.setdefault(key, value)
+    ranked = sorted(
+        support,
+        key=lambda key: (-support[key], windows[key][0] - windows[key][-1], position[key], windows[key][0], key),
+    )
+    return [display[key] for key in ranked[:limit]]
 
 
 def _spread_category_evidence(indexes: list[int], episode: EpisodeInput, limit: int = 3) -> list[int]:

@@ -977,3 +977,16 @@ def test_hierarchical_merge_joins_a_seam_that_continues_the_same_topic(seam_titl
     assert result.candidate.chapters[1].title == "Gaza Ceasefire Talks"
     assert result.seam_chapters_merged == int(merged)
     assert result.as_dict()["normalizations"]["seam_chapters_merged"] == int(merged)
+
+
+def test_window_label_ranking_keeps_late_window_topics_and_folds_variants():
+    from app.archive.openrouter_enrichment import _rank_window_labels
+
+    windows = [[f"Window {window} topic {rank}" for rank in range(12)] for window in range(3)]
+    windows[0].insert(5, "Trump's tariffs")
+    windows[2].insert(9, "Trump tariffs")
+    ranked = _rank_window_labels(windows, 12)
+    assert ranked[0] == "Trump's tariffs"
+    assert "Trump tariffs" not in ranked
+    assert {label.split(" topic")[0] for label in ranked[1:]} == {"Window 0", "Window 1", "Window 2"}
+    assert ranked[1:4] == ["Window 0 topic 0", "Window 1 topic 0", "Window 2 topic 0"]
