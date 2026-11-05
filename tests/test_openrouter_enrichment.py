@@ -794,3 +794,20 @@ def test_hierarchical_enrichment_preserves_usage_when_later_window_fails(monkeyp
         "usage_reported": False,
         "transient": not transport,
     }
+
+
+@pytest.mark.parametrize(
+    "title,slug,rejected",
+    [
+        ("Hasan and his girlfriend", "irl", True),
+        ("Gavin Newsom interview", "news", True),
+        ("IRL at the county fair", "irl", False),
+        ("Breaking news stream", "news", False),
+    ],
+)
+def test_category_title_shortcut_matches_whole_words(title, slug, rejected):
+    from app.archive.openrouter_enrichment import _category_rejection_reason
+
+    episode = _episode().model_copy(update={"title": title})
+    reason = _category_rejection_reason({"slug": slug, "evidence_block_indexes": [0]}, episode)
+    assert (reason is not None) is rejected

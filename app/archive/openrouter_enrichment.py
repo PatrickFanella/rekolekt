@@ -14,6 +14,7 @@ from urllib import error, request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from .enrichment_runner import EpisodeInput, TranscriptBlockInput
+from .intelligence_queries.topics import alias_matches_text
 from .labeling.benchmark import EpisodePrediction, PredictedChapter
 
 OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -407,7 +408,7 @@ def _category_rejection_reason(category: dict[str, Any], episode: EpisodeInput) 
         marker = CATEGORY_LABELS[slug].casefold()
         evidence_text = " ".join(block.text for block in blocks).casefold()
         return None if marker in title or marker in evidence_text else "required_segment_marker_missing"
-    if CATEGORY_LABELS.get(slug, "").casefold() in title:
+    if alias_matches_text(CATEGORY_LABELS.get(slug, ""), title):
         return None
     if len(blocks) < 2:
         return "insufficient_evidence_blocks"
