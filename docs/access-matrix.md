@@ -11,6 +11,7 @@
 | Admin routes | authenticated plus `admin:access` capability |
 | Search, public archive/video reads, suggestions, mention exports | public GET |
 | Favorites, saved searches, profile | authenticated owner |
+| Clip request/status/download and export from a saved favorite | authenticated owner; opt-in feature; local-original mode also requires registered source ownership |
 | Jobs list/read/write | authenticated owner or scoped API key (`jobs:read`, `jobs:write`) |
 | Vocabulary mutation | authenticated owner; global management admin only |
 | API key issuance | authenticated owner; admin scopes require audited admin issuance |

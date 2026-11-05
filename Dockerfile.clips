@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PIP_NO_CACHE_DIR=1
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg nodejs ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+COPY requirements-api.txt constraints.txt ./
+RUN pip install -c constraints.txt -r requirements-api.txt
+COPY app ./app
+COPY scripts/clip_exports.py ./scripts/clip_exports.py
+RUN useradd --uid 10001 --create-home clips && mkdir -m 700 /spool && chown clips:clips /spool
+USER clips
+ENV CLIP_SPOOL_DIR=/spool CLIP_EXPORT_SOURCE=youtube JS_RUNTIME_CMD=node
+CMD ["python", "scripts/clip_exports.py", "work"]

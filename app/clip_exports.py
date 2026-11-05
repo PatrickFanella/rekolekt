@@ -1,4 +1,4 @@
-"""Bounded local-original clip spool. No acquisition, remote inputs, or public files."""
+"""Private, expiring clip spool for registered originals or yt-dlp time ranges."""
 
 from __future__ import annotations
 
@@ -6,8 +6,13 @@ import fcntl
 import hashlib
 import json
 import math
+import os
+import re
 import shutil
+import signal
 import subprocess
+import sys
+import tempfile
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -16,7 +21,10 @@ from uuid import UUID, uuid4
 MAX_SOURCE_BYTES = 10 * 1024**3
 MAX_OUTPUT_BYTES = 100 * 1024**2
 MAX_DURATION_MS = 120_000
-TTL_SECONDS = 24 * 3600
+TTL_SECONDS = 3600
+MIN_FREE_BYTES = 20 * 1024**3
+DOWNLOAD_TIMEOUT_SECONDS = 600
+RENDER_TIMEOUT_SECONDS = 180
 
 
 class ClipError(ValueError):
@@ -61,10 +69,16 @@ def probe(path: Path) -> dict:
 
 
 class ClipStore:
-    def __init__(self, spool: Path, originals: Path):
+    def __init__(self, spool: Path, originals: Path | None = None, *, source="original", ttl_seconds=TTL_SECONDS):
         self.spool = spool.resolve()
-        self.originals = originals.resolve(strict=True)
-        if (
+        if source not in ("original", "youtube") or not 60 <= ttl_seconds <= 86400:
+            raise ClipError("Use an original or youtube source and a cache lifetime of 60–86400 seconds")
+        self.source = source
+        self.ttl_seconds = ttl_seconds
+        self.originals = originals.resolve(strict=True) if originals else None
+        if source == "original" and self.originals is None:
+            raise ClipError("Configure an originals directory for local-original exports")
+        if self.originals is not None and (
             not self.originals.is_dir()
             or self.spool == self.originals
             or self.spool.is_relative_to(self.originals)
@@ -78,8 +92,8 @@ class ClipStore:
             (self.spool / name).mkdir(exist_ok=True, mode=0o700)
 
     @contextmanager
-    def lock(self):
-        with (self.spool / ".lock").open("a") as lock:
+    def lock(self, name=".lock"):
+        with (self.spool / name).open("a") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError as exc:
@@ -106,6 +120,8 @@ class ClipStore:
         temporary.replace(path)
 
     def original(self, source: dict) -> Path:
+        if self.originals is None:
+            raise ClipError("Local originals are not configured")
         if source.get("revoked"):
             raise ClipError("Original authorization has been revoked")
         path = (self.originals / str(source["relative_path"])).resolve(strict=True)
@@ -128,7 +144,7 @@ class ClipStore:
         if not 10 <= len(rights_note.strip()) <= 2000:
             raise ClipError("Record a specific authorization basis (10–2000 characters)")
         path = source_path.resolve(strict=True)
-        if not path.is_relative_to(self.originals):
+        if self.originals is None or not path.is_relative_to(self.originals):
             raise ClipError("Original is outside the configured originals directory")
         source = {
             "video_id": video_id,
@@ -152,7 +168,9 @@ class ClipStore:
             self.save("sources", video_id, source)
         return source
 
-    def enqueue(self, video_id: str, owner_id: str, start_ms: int, end_ms: int) -> dict:
+    def enqueue(
+        self, video_id: str, owner_id: str, start_ms: int, end_ms: int, *, youtube_id: str | None = None
+    ) -> dict:
         owner_id = str(UUID(owner_id))
         if (
             type(start_ms) is not int
@@ -162,37 +180,47 @@ class ClipStore:
         ):
             raise ClipError("Select between 1 millisecond and 120 seconds")
         with self.lock():
-            source = self.load("sources", video_id)
-            if source["owner_id"] != owner_id:
-                raise ClipError("Only the registered original owner may request this export")
-            self.original(source)
-            if end_ms > source["duration_ms"]:
-                raise ClipError("Selection ends after the authorized original")
+            if self.source == "youtube":
+                if not youtube_id or not re.fullmatch(r"[A-Za-z0-9_-]{11}", youtube_id):
+                    raise ClipError("Source recording must have a valid YouTube video ID")
+                source_key = {"source_kind": "youtube", "youtube_id": youtube_id}
+            else:
+                source = self.load("sources", video_id)
+                if source["owner_id"] != owner_id:
+                    raise ClipError("Only the registered original owner may request this export")
+                self.original(source)
+                if end_ms > source["duration_ms"]:
+                    raise ClipError("Selection ends after the authorized original")
+                source_key = {"source_sha256": source["sha256"]}
             active: list[dict] = [json.loads(p.read_text()) for p in (self.spool / "jobs").glob("*.json")]
             for previous in active:
                 if (
                     previous["owner_id"] == owner_id
                     and previous["video_id"] == str(UUID(video_id))
-                    and previous["source_sha256"] == source["sha256"]
+                    and all(previous.get(k) == v for k, v in source_key.items())
                     and previous["start_ms"] == start_ms
                     and previous["end_ms"] == end_ms
                     and previous["status"] in ("queued", "running", "completed")
                     and previous["expires_at"] > time.time()
+                    and (previous["status"] != "completed" or self.media_path(previous["id"]).is_file())
                 ):
                     return previous
-            if sum(j["expires_at"] > time.time() for j in active) >= 20:
+            if (
+                sum(j["expires_at"] > time.time() and j["status"] in ("queued", "running", "completed") for j in active)
+                >= 20
+            ):
                 raise ClipError("Local export capacity reached; clean up expired exports before retrying")
             now = time.time()
             job = {
                 "id": str(uuid4()),
                 "video_id": str(UUID(video_id)),
                 "owner_id": owner_id,
-                "source_sha256": source["sha256"],
+                **source_key,
                 "start_ms": start_ms,
                 "end_ms": end_ms,
                 "status": "queued",
                 "created_at": now,
-                "expires_at": now + TTL_SECONDS,
+                "expires_at": now + self.ttl_seconds,
             }
             self.save("jobs", job["id"], job)
             return job
@@ -201,7 +229,8 @@ class ClipStore:
         job = self.load("jobs", job_id)
         if job["owner_id"] != str(UUID(owner_id)):
             raise ClipError("Clip or authorized original not found")
-        self.original(self.load("sources", job["video_id"]))
+        if job.get("source_kind") != "youtube":
+            self.original(self.load("sources", job["video_id"]))
         if job["expires_at"] <= time.time():
             return {**job, "status": "expired"}
         return job
@@ -210,28 +239,107 @@ class ClipStore:
         job = self.status(job_id, owner_id)
         if job["status"] != "completed":
             raise ClipError("Clip is not complete or has expired")
-        path = self.spool / "jobs" / f"{UUID(job_id)}.mp4"
+        path = self.media_path(job_id)
         if not path.is_file() or digest(path) != job["output_sha256"]:
             raise ClipError("Clip output is missing or failed integrity verification")
         return path
 
+    def media_path(self, job_id: str) -> Path:
+        return self.spool / "jobs" / f"{UUID(job_id)}.mp4"
+
+    def acquire_youtube(self, job: dict, directory: Path) -> Path:
+        """Only archive IDs reach this boundary; no caller-supplied URLs or options."""
+        from .settings import settings
+
+        video_id = job["youtube_id"]
+        if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
+            raise ClipError("Invalid YouTube video ID")
+        command = [
+            sys.executable,
+            "-m",
+            "yt_dlp",
+            "--ignore-config",
+            "--no-playlist",
+            "--no-progress",
+            "--no-cache-dir",
+            "--no-write-info-json",
+            "--no-write-thumbnail",
+            "--no-write-subs",
+            "--match-filter",
+            "!is_live",
+            "--retries",
+            "2",
+            "--fragment-retries",
+            "2",
+            "--socket-timeout",
+            "30",
+            "--js-runtimes",
+            settings.JS_RUNTIME_CMD,
+            "--download-sections",
+            f"*{job['start_ms'] / 1000:.3f}-{job['end_ms'] / 1000:.3f}",
+            "--force-keyframes-at-cuts",
+            "--format",
+            "bv[height<=720]+ba/b[height<=720]",
+            "--merge-output-format",
+            "mp4",
+            "--remux-video",
+            "mp4",
+            "--downloader-args",
+            f"ffmpeg_o:-fs {MAX_OUTPUT_BYTES} -threads 2",
+            "--output",
+            str(directory / "section.%(ext)s"),
+        ]
+        if settings.YTDLP_COOKIES_PATH:
+            command.extend(["--cookies", settings.YTDLP_COOKIES_PATH])
+        command.extend(["--", f"https://www.youtube.com/watch?v={video_id}"])
+        # Kill the whole process group on timeout, including yt-dlp's ffmpeg child.
+        with subprocess.Popen(
+            command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True
+        ) as proc:
+            try:
+                if proc.wait(timeout=DOWNLOAD_TIMEOUT_SECONDS):
+                    raise ClipError(
+                        "YouTube clip download failed; the source may be unavailable or require authentication"
+                    )
+            except BaseException:
+                if proc.poll() is None:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    proc.wait()
+                raise
+        output = directory / "section.mp4"
+        if not output.is_file() or not 0 < output.stat().st_size <= MAX_OUTPUT_BYTES:
+            raise ClipError("YouTube clip download did not produce a bounded MP4")
+        return output
+
     def run(self, job_id: str) -> dict:
         # One renderer per spool. A crashed/interrupted run is never silently retried.
-        with self.lock():
+        with self.lock(".render.lock"):
             job = self.load("jobs", job_id)
             if job["status"] != "queued" or job["expires_at"] <= time.time():
                 raise ClipError("Only an unexpired queued export can run")
-            job["status"] = "running"
+            job.update(
+                status="running",
+                started_at=time.time(),
+                expires_at=time.time() + DOWNLOAD_TIMEOUT_SECONDS + RENDER_TIMEOUT_SECONDS + 30,
+            )
             self.save("jobs", job_id, job)
-            output = self.spool / "jobs" / f"{UUID(job_id)}.mp4"
+            output = self.media_path(job_id)
             partial = output.with_suffix(".partial.mp4")
+            workspace = None
             try:
-                source = self.load("sources", job["video_id"])
-                original = self.original(source)
-                if digest(original) != job["source_sha256"] or source["sha256"] != job["source_sha256"]:
-                    raise ClipError("Original changed after registration")
-                if shutil.disk_usage(self.spool).free < 2 * MAX_OUTPUT_BYTES:
+                if shutil.disk_usage(self.spool).free < MIN_FREE_BYTES + 2 * MAX_OUTPUT_BYTES:
                     raise ClipError("Insufficient spool space")
+                if job.get("source_kind") == "youtube":
+                    workspace = tempfile.TemporaryDirectory(prefix=f"{job['id']}-", dir=self.spool / "jobs")
+                    original = self.acquire_youtube(job, Path(workspace.name))
+                    source = probe(original)
+                    start_seconds = 0
+                else:
+                    source = self.load("sources", job["video_id"])
+                    original = self.original(source)
+                    if digest(original) != job["source_sha256"] or source["sha256"] != job["source_sha256"]:
+                        raise ClipError("Original changed after registration")
+                    start_seconds = job["start_ms"] / 1000
                 duration = (job["end_ms"] - job["start_ms"]) / 1000
                 subprocess.run(
                     [
@@ -246,7 +354,7 @@ class ClipStore:
                         "-f",
                         source["format"],
                         "-ss",
-                        str(job["start_ms"] / 1000),
+                        str(start_seconds),
                         "-i",
                         str(original),
                         "-t",
@@ -281,18 +389,24 @@ class ClipStore:
                     ],
                     check=True,
                     capture_output=True,
-                    timeout=180,
+                    timeout=RENDER_TIMEOUT_SECONDS,
                 )
                 if (
                     partial.stat().st_size > MAX_OUTPUT_BYTES
                     or abs(probe(partial)["duration_ms"] - round(duration * 1000)) > 250
                 ):
                     raise ClipError("Rendered output failed size/duration checks")
-                if digest(original) != job["source_sha256"]:
+                if job.get("source_kind") != "youtube" and digest(original) != job["source_sha256"]:
                     raise ClipError("Original changed while rendering")
                 partial.chmod(0o600)
                 partial.replace(output)
-                job.update(status="completed", output_sha256=digest(output), output_bytes=output.stat().st_size)
+                job.update(
+                    status="completed",
+                    output_sha256=digest(output),
+                    output_bytes=output.stat().st_size,
+                    completed_at=time.time(),
+                    expires_at=time.time() + self.ttl_seconds,
+                )
             except (OSError, ValueError, subprocess.SubprocessError, KeyboardInterrupt) as exc:
                 partial.unlink(missing_ok=True)
                 output.unlink(missing_ok=True)
@@ -308,11 +422,14 @@ class ClipStore:
                 if isinstance(exc, KeyboardInterrupt):
                     raise
                 return job
+            finally:
+                if workspace is not None:
+                    workspace.cleanup()
             self.save("jobs", job_id, job)
             return job
 
     def revoke(self, video_id: str):
-        with self.lock():
+        with self.lock(".render.lock"), self.lock():
             source = self.load("sources", video_id)
             source["revoked"] = True
             self.save("sources", video_id, source)
@@ -327,7 +444,7 @@ class ClipStore:
 
     def cleanup(self, apply: bool = False) -> dict:
         removed = []
-        with self.lock():
+        with self.lock(".render.lock"), self.lock():
             for path in (self.spool / "jobs").glob("*.json"):
                 job = json.loads(path.read_text())
                 if job["expires_at"] <= time.time() or job["status"] in ("failed", "revoked"):
@@ -335,5 +452,8 @@ class ClipStore:
                     if apply:
                         path.with_suffix(".mp4").unlink(missing_ok=True)
                         path.with_suffix(".partial.mp4").unlink(missing_ok=True)
+                        for workspace in path.parent.glob(f"{job['id']}-*"):
+                            if workspace.is_dir():
+                                shutil.rmtree(workspace)
                         path.unlink()
         return {"apply": apply, "jobs": removed}
