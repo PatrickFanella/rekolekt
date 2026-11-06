@@ -120,6 +120,17 @@ def _youtube_branches(q, video_id, filters, params):
     return text_where, title_where, (text_match, highlighted_text, text_rank, title_match)
 
 
+# Captions count only for videos without a native transcript. A per-row NOT
+# EXISTS made the planner walk every caption line of those videos instead of
+# the full-text index. Collecting the caption-only transcript ids once keeps
+# the full-text index in charge; IS TRUE stops the planner from also turning
+# the id list into a scan of the transcript-id index.
+_CAPTION_ONLY_TRANSCRIPT = """(ys.youtube_transcript_id = ANY(ARRAY(
+                    SELECT caption_only.id FROM youtube_transcripts caption_only
+                    WHERE NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = caption_only.video_id)
+                ))) IS TRUE"""
+
+
 def _best_branches(q, video_id, filters, params):
     """WHERE clauses for the four best-source branches: native and caption-only videos."""
     native_match, native_highlight, native_rank, title_match = _match_expressions("s", q, filters, params)
@@ -148,7 +159,7 @@ def _best_branches(q, video_id, filters, params):
             native_where.append("s.speaker_label IS NULL")
             native_title_where.append("s.speaker_label IS NULL")
 
-    youtube_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
+    youtube_where.append(_CAPTION_ONLY_TRANSCRIPT)
     youtube_title_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
     return (
         native_where,

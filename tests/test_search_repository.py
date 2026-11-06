@@ -261,6 +261,8 @@ def test_search_best_builds_expected_sql_and_preserves_source():
     ]
     sql = str(db.calls[0]["statement"])
     assert "NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)" in sql
+    # Caption text hits filter on caption-only transcript ids, not a per-row NOT EXISTS.
+    assert "ys.youtube_transcript_id = ANY(ARRAY(" in sql
     assert "s.text_tsv @@ websearch_to_tsquery('english', :q) OR v.title ILIKE :title_q" not in sql
     assert "FROM segments s" in sql
     assert "WHERE s.text_tsv @@ websearch_to_tsquery('english', :q)" in sql
