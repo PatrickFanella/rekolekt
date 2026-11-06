@@ -28,9 +28,9 @@ from app.search.highlights import (
     normalize_search_rows,
     parse_highlighted_snippet,
 )
-from app.search.mention_cache import cached_mention_map
 from app.search.outbox import search_index_freshness
 from app.search.repositories import PostgresSearchBackend
+from app.search.result_cache import cached_grouped_search, cached_mention_map
 from app.search.service import SearchService
 from app.search.types import SearchRequest
 from app.settings import settings
@@ -497,7 +497,7 @@ class SearchOrchestrator:
         if match_mode != "topic":
             filters["match_mode"] = match_mode
         context = search_analytics.record_search_request(request, db, q, source)
-        result = crud.get_grouped_search(
+        result = cached_grouped_search(
             db,
             q=q,
             source=source,

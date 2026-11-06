@@ -723,7 +723,7 @@ _RELATED_TERM_STOPWORDS = frozenset("""
     thought three through time times today told took totally toward true truly trying twice under
     until upon used very want wanted wants wasn't watch week went were weren't what what's whatever
     when whenever where whether which while whole whose will with within without won't worse worst
-    would wouldn't yeah years you'll your you're yours yourself
+    would wouldn't yeah years you'll your you're yours yourself it's he's she's i'm we're well fucking
     """.split())
 
 
@@ -757,6 +757,20 @@ def related_terms(q: str, moments, limit: int = 5) -> list[str]:
     return [term for term, _count in ranked[:limit]]
 
 
+# Related terms come from the most-mentioned episodes. Each is a cheap per-video
+# fetch, so a common term never ranks or highlights its whole result set, and a
+# rare term's handful of episodes still contributes every moment.
+RELATED_TERM_EPISODES = 20
+RELATED_TERM_MOMENTS_PER_EPISODE = 50
+
+
+def _pick_moment(moments, start_ms):
+    """Return the moment at ``start_ms``, preferring a spoken (highlighted) one."""
+    at_time = [moment for moment in moments if moment.start_ms == start_ms]
+    spoken = [moment for moment in at_time if moment.highlights]
+    return (spoken or at_time or [None])[0]
+
+
 @_retry_on_transient_error
 def get_mention_map(
     db,
@@ -770,92 +784,102 @@ def get_mention_map(
     top_limit: int = 5,
 ):
     from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
 
     from app.schemas import EpisodeSearchGroup, MentionMap
 
-    # Mention-map statistics describe the complete canonical result set, not
-    # the relevance page used to render a compact search result list.
-    groups_by_video: dict[str, EpisodeSearchGroup] = {}
-    scan_offset = 0
-    query_time_ms = 0
-    while True:
-        page = get_grouped_search(
-            db,
-            q=q,
-            source=source,
-            video_id=video_id,
-            limit=500,
-            offset=scan_offset,
-            sort_by=sort_by,
-            filters=filters,
-        )
-        query_time_ms += page.query_time_ms or 0
-        for group in page.groups:
-            # Moments are dated by when the stream happened, not when it was uploaded.
-            effective_date = video_broadcast_at(group.video)
-            normalized = [
-                moment.model_copy(update={"uploaded_at": effective_date, "broadcast_date": group.video.broadcast_date})
-                for moment in group.moments
-            ]
-            existing = groups_by_video.get(str(group.video.id))
-            if existing is None:
-                groups_by_video[str(group.video.id)] = group.model_copy(update={"moments": normalized})
-            else:
-                existing.moments.extend(normalized)
-        if page.total_moments < 500:
-            break
-        scan_offset += 500
-
-    complete_groups = list(groups_by_video.values())
-    moments = [moment for group in complete_groups for moment in group.moments]
-    # Title matches cite a video, not a spoken passage: they count as matches but
-    # never stand in as the first or latest mention or as related-term evidence.
-    transcript_moments = [moment for moment in moments if not moment.title_match]
-    citable_moments = transcript_moments or moments
-
+    filters = filters or {}
+    start_time = time.time()
+    # Mention-map statistics describe the complete result set. Counting it per
+    # video in one pass avoids ranking and highlighting every matched moment.
+    counts = [dict(row) for row in _search_repository.mention_counts(db, q, source, video_id, filters)]
     baseline = datetime.min.replace(tzinfo=timezone.utc)
+    for row in counts:
+        row["video_id"] = str(row["video_id"])
+        # Moments are dated by when the stream happened, not when it was uploaded.
+        row["broadcast_at"] = video_broadcast_at(SimpleNamespace(**row))
 
-    def sort_key(moment):
-        return (
-            moment.uploaded_at or baseline,
-            moment.start_ms,
-            str(moment.video_id),
-        )
-
-    ordered_moments = sorted(citable_moments, key=sort_key)
-    first_mention = ordered_moments[0] if ordered_moments else None
-    latest_mention = ordered_moments[-1] if ordered_moments else None
-
-    dated_moments = [(moment, moment.uploaded_at) for moment in moments if moment.uploaded_at is not None]
-    first_mentioned_year = None
-    if first_mention and first_mention.uploaded_at is not None:
-        first_mentioned_year = first_mention.uploaded_at.year
-
+    total_moments = sum(int(row["moments"]) for row in counts)
     period_counts: dict[str, int] = {}
-    for _moment, uploaded_at in dated_moments:
-        period = str(uploaded_at.year)
-        period_counts[period] = period_counts.get(period, 0) + 1
+    recent_mentions_90d = 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=90)
+    for row in counts:
+        if row["broadcast_at"] is None:
+            continue
+        period = str(row["broadcast_at"].year)
+        period_counts[period] = period_counts.get(period, 0) + int(row["moments"])
+        if row["broadcast_at"] >= cutoff:
+            recent_mentions_90d += int(row["moments"])
     most_discussed_period, most_discussed_count = (None, 0)
     if period_counts:
         most_discussed_period, most_discussed_count = sorted(
             period_counts.items(), key=lambda item: (-item[1], item[0])
         )[0]
 
-    now = datetime.now(timezone.utc)
-    cutoff = now - timedelta(days=90)
-    recent_mentions_90d = sum(1 for _moment, uploaded_at in dated_moments if uploaded_at >= cutoff)
+    # Title matches cite a video, not a spoken passage: they count as matches but
+    # never stand in as the first or latest mention unless nothing was spoken.
+    spoken_rows = [row for row in counts if row["spoken"]]
+    first_key, last_key = ("first_spoken_ms", "last_spoken_ms") if spoken_rows else ("first_any_ms", "last_any_ms")
+    citable_rows = spoken_rows or counts
+    first_row = min(
+        citable_rows, key=lambda row: (row["broadcast_at"] or baseline, row[first_key], row["video_id"]), default=None
+    )
+    latest_row = max(
+        citable_rows, key=lambda row: (row["broadcast_at"] or baseline, row[last_key], row["video_id"]), default=None
+    )
+    ranked_rows = sorted(
+        counts, key=lambda row: (-int(row["moments"]), row["broadcast_at"] or baseline, row["video_id"])
+    )
+    top_rows = ranked_rows[:top_limit]
+    # Top, first and latest episodes are shown in full; the rest only feed related terms.
+    shown_rows = [row for row in (*top_rows, first_row, latest_row) if row is not None]
+    shown = {row["video_id"] for row in shown_rows}
+    evidence_rows = ranked_rows[: max(top_limit, RELATED_TERM_EPISODES)]
 
-    related_topics = related_terms(q, transcript_moments)
+    groups: dict[str, EpisodeSearchGroup] = {}
+    for row in [*shown_rows, *evidence_rows]:
+        if row["video_id"] in groups:
+            continue
+        moments = int(row["moments"])
+        page = get_grouped_search(
+            db,
+            q=q,
+            source=source,
+            video_id=row["video_id"],
+            limit=moments if row["video_id"] in shown else min(moments, RELATED_TERM_MOMENTS_PER_EPISODE),
+            sort_by="date_asc",
+            filters=filters,
+        )
+        for group in page.groups:
+            effective_date = video_broadcast_at(group.video)
+            groups[str(group.video.id)] = group.model_copy(
+                update={
+                    "moments": [
+                        moment.model_copy(
+                            update={"uploaded_at": effective_date, "broadcast_date": group.video.broadcast_date}
+                        )
+                        for moment in group.moments
+                    ]
+                }
+            )
 
-    top_episodes = sorted(
-        complete_groups,
-        key=lambda group: (-len(group.moments), video_broadcast_at(group.video) or baseline, str(group.video.id)),
-    )[:top_limit]
+    def cited(row, key):
+        group = groups.get(row["video_id"]) if row else None
+        return _pick_moment(group.moments, row[key]) if group else None
+
+    first_mention = cited(first_row, first_key)
+    latest_mention = cited(latest_row, last_key)
+    first_mentioned_year = first_row["broadcast_at"].year if first_row and first_row["broadcast_at"] else None
+
+    evidence = [moment for group in groups.values() for moment in group.moments if not moment.title_match]
+    related_topics = related_terms(q, evidence)
+
+    top_episodes = [groups[row["video_id"]] for row in top_rows if row["video_id"] in groups]
 
     return MentionMap(
         query=q,
-        total_moments=len(moments),
-        total_videos=len(complete_groups),
+        total_moments=total_moments,
+        total_videos=len(counts),
         first_mentioned_year=first_mentioned_year,
         most_discussed_period=most_discussed_period,
         most_discussed_count=most_discussed_count,
@@ -865,7 +889,7 @@ def get_mention_map(
         first_mention=first_mention,
         latest_mention=latest_mention,
         top_episodes=top_episodes,
-        query_time_ms=query_time_ms,
+        query_time_ms=int((time.time() - start_time) * 1000),
     )
 
 
