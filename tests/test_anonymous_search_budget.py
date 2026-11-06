@@ -149,6 +149,46 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(result_cache.cached_mention_map(corpus(), q="topic"), self.result)
         self.search.assert_called_once()
 
+    def test_topic_warm_up_recomputes_every_published_topic(self):
+        self.redis.get.return_value = self.result.model_dump_json()
+        db = corpus()
+        db.execute.return_value.scalars.return_value.all.return_value = ["epstein", "new-york"]
+
+        self.assertEqual(result_cache.warm_topic_mention_maps(db), 2)
+
+        self.redis.get.assert_not_called()
+        self.assertEqual(self.search.call_count, 2)
+        self.assertEqual(self.redis.setex.call_count, 2)
+
+    def test_topic_warm_up_skips_without_a_cache(self):
+        self.redis.get.return_value = None
+        with patch.object(result_cache, "get_redis_client", return_value=None):
+            self.assertEqual(result_cache.warm_topic_mention_maps(corpus()), 0)
+        self.search.assert_not_called()
+
+
+def test_topic_warm_up_uses_the_topic_page_cache_key():
+    """A bare /search/mention-map?q=<slug> request must hit the warmed entry."""
+    import inspect
+
+    from app.routes import search as search_routes
+
+    defaults = {
+        name: param.default.default
+        for name, param in inspect.signature(search_routes.search_mention_map).parameters.items()
+        if name not in {"request", "q", "db"}
+    }
+    with (
+        patch("app.search.orchestrator.cached_mention_map") as cached,
+        patch("app.search.orchestrator.search_analytics.record_search_request") as record,
+    ):
+        cached.return_value = MentionMap(query="epstein", total_moments=0, total_videos=0)
+        record.return_value.user_id = None
+        search_routes.search_mention_map(request("/search/mention-map"), q="epstein", db=MagicMock(), **defaults)
+
+    _, kwargs = cached.call_args
+    assert kwargs == result_cache.topic_mention_map_params("epstein")
+
 
 def test_admission_attribution_omits_queries_and_credentials(caplog, monkeypatch):
     connection = MagicMock()

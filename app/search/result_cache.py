@@ -2,6 +2,8 @@
 
 Keys include a corpus version, so a new transcript or video edit invalidates
 earlier results at once and the TTL only bounds metadata drift (tags, people).
+The archive intelligence refresher re-warms every published topic's mention
+map each hour, so topic pages are served from this cache.
 """
 
 import hashlib
@@ -23,7 +25,9 @@ logger = get_logger(__name__)
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 
-RESULT_TTL_SECONDS = 1800
+# Longer than the hourly topic warm-up, so warmed topic pages never expire
+# between runs.
+RESULT_TTL_SECONDS = 7200
 
 # Primary-key maxima and the newest video edit are index or small-table reads.
 _CORPUS_VERSION_SQL = text("""
@@ -43,7 +47,9 @@ def _corpus_version(db) -> str | None:
     return hashlib.sha256(json.dumps(list(row), default=str).encode()).hexdigest()[:16]
 
 
-def _cached(db, kind: str, model: type[ResultT], compute: Callable[[], Any], params: dict) -> ResultT:
+def _cached(
+    db, kind: str, model: type[ResultT], compute: Callable[[], Any], params: dict, refresh: bool = False
+) -> ResultT:
     client = get_redis_client() if settings.ENABLE_CACHING else None
     version = _corpus_version(db) if client is not None else None
     if client is None or version is None:
@@ -54,7 +60,7 @@ def _cached(db, kind: str, model: type[ResultT], compute: Callable[[], Any], par
     key = f"search-result:v2:{kind}:{version}:{digest}"
     started = time.monotonic()
     try:
-        cached = client.get(key)
+        cached = None if refresh else client.get(key)
         if cached is not None:
             result = model.model_validate_json(cached)
             # Report this request's latency, not the original computation's.
@@ -69,8 +75,38 @@ def _cached(db, kind: str, model: type[ResultT], compute: Callable[[], Any], par
     return result
 
 
-def cached_mention_map(db, **params) -> MentionMap:
-    return _cached(db, "mention-map", MentionMap, lambda: crud.get_mention_map(db, **params), params)
+def cached_mention_map(db, refresh: bool = False, **params) -> MentionMap:
+    return _cached(db, "mention-map", MentionMap, lambda: crud.get_mention_map(db, **params), params, refresh)
+
+
+def topic_mention_map_params(q: str) -> dict[str, Any]:
+    """Arguments the topic page's request (``/search/mention-map?q=<slug>``) produces."""
+    return {
+        "q": q,
+        "source": "best",
+        "video_id": None,
+        "limit": 50,
+        "offset": 0,
+        "sort_by": "relevance",
+        "filters": {},
+        "top_limit": 5,
+    }
+
+
+def warm_topic_mention_maps(db) -> int:
+    """Recompute and cache the mention map of every published topic."""
+    if not settings.ENABLE_CACHING or get_redis_client() is None:
+        return 0
+    slugs = db.execute(text("SELECT slug FROM archive_topics WHERE status = 'published' ORDER BY slug")).scalars().all()
+    warmed = 0
+    for slug in slugs:
+        try:
+            cached_mention_map(db, refresh=True, **topic_mention_map_params(slug))
+            warmed += 1
+        except Exception:
+            db.rollback()
+            logger.warning("Topic mention map warm-up failed", extra={"topic": slug})
+    return warmed
 
 
 def cached_grouped_search(db, **params) -> GroupedSearchResponse:
