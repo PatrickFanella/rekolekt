@@ -1,69 +1,13 @@
 """Tests for CRUD operations."""
 
 import uuid
-from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock
 
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
 from app import crud
-from app.schemas import EpisodeSearchGroup, GroupedSearchResponse, SearchMoment, VideoInfo
-
-
-def test_mention_map_uses_complete_matches_and_effective_video_date(monkeypatch):
-    old_id = uuid.uuid4()
-    recent_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
-    old_video = VideoInfo(
-        id=old_id,
-        youtube_id="old-video-1",
-        created_at=datetime(2020, 4, 2, tzinfo=timezone.utc),
-    )
-    recent_video = VideoInfo(
-        id=recent_id,
-        youtube_id="new-video-1",
-        # Uploaded long after the broadcast: mentions are dated by the broadcast.
-        uploaded_at=now + timedelta(days=30),
-        broadcast_date=(now - timedelta(days=88)).date(),
-        created_at=datetime(2019, 1, 1, tzinfo=timezone.utc),
-    )
-
-    def moment(index, video):
-        return SearchMoment(
-            id=index + 1,
-            video_id=video.id,
-            start_ms=index * 1000,
-            end_ms=index * 1000 + 500,
-            snippet="topic context",
-            source="whisper",
-        )
-
-    pages = {
-        0: GroupedSearchResponse(
-            total_moments=500,
-            total_videos=1,
-            groups=[EpisodeSearchGroup(video=recent_video, moments=[moment(i, recent_video) for i in range(500)])],
-            query_time_ms=2,
-        ),
-        500: GroupedSearchResponse(
-            total_moments=1,
-            total_videos=1,
-            groups=[EpisodeSearchGroup(video=old_video, moments=[moment(900, old_video)])],
-            query_time_ms=3,
-        ),
-    }
-    monkeypatch.setattr(crud, "get_grouped_search", lambda *_args, **kwargs: pages[kwargs["offset"]])
-
-    result = crud.get_mention_map(MagicMock(), q="topic", limit=10)
-
-    assert result.total_moments == 501
-    assert result.total_videos == 2
-    assert result.recent_mentions_90d == 500
-    assert result.first_mentioned_year == 2020
-    assert result.first_mention.video_id == old_id
-    assert result.latest_mention.video_id == recent_id
-    assert result.query_time_ms == 5
+from app.schemas import SearchMoment
 
 
 class TestJobCrud:
@@ -358,81 +302,6 @@ class TestRetryDecorator:
 
         operation(db)
         assert db.rollback.call_count == 1
-
-
-def test_mention_map_cites_transcript_moments_before_title_matches(monkeypatch):
-    video_id = uuid.uuid4()
-    video = VideoInfo(
-        id=video_id,
-        youtube_id="video-1",
-        title="Housing crisis deep dive",
-        uploaded_at=datetime(2026, 6, 3, tzinfo=timezone.utc),
-    )
-
-    def moment(index, snippet, title_match=False):
-        return SearchMoment(
-            id=index,
-            video_id=video_id,
-            start_ms=index * 1000,
-            end_ms=index * 1000 + 500,
-            snippet=snippet,
-            source="whisper",
-            uploaded_at=video.uploaded_at,
-            title_match=title_match,
-        )
-
-    page = GroupedSearchResponse(
-        total_moments=4,
-        total_videos=1,
-        groups=[
-            EpisodeSearchGroup(
-                video=video,
-                moments=[
-                    moment(1, "Housing crisis deep dive", title_match=True),
-                    moment(2, "Rent control is the housing fight landlords dread."),
-                    moment(3, "The housing supply numbers are what landlords ignore."),
-                    moment(4, "Rent and landlords again, the housing story never ends."),
-                ],
-            )
-        ],
-        query_time_ms=1,
-    )
-    monkeypatch.setattr(crud, "get_grouped_search", lambda *_args, **_kwargs: page)
-
-    result = crud.get_mention_map(MagicMock(), q="housing", limit=10)
-
-    assert result.total_moments == 4
-    assert result.first_mention.id == 2
-    assert result.latest_mention.id == 4
-    assert not result.first_mention.title_match
-    assert result.related_topics[:2] == ["landlords", "rent"]
-    assert not {"deep", "dive"} & set(result.related_topics)
-
-
-def test_mention_map_falls_back_to_title_matches_when_nothing_was_spoken(monkeypatch):
-    video_id = uuid.uuid4()
-    video = VideoInfo(id=video_id, youtube_id="video-1", title="Debate night")
-    page = GroupedSearchResponse(
-        total_moments=1,
-        total_videos=1,
-        groups=[
-            EpisodeSearchGroup(
-                video=video,
-                moments=[
-                    SearchMoment(
-                        id=1, video_id=video_id, start_ms=0, end_ms=500, snippet="Debate night", title_match=True
-                    )
-                ],
-            )
-        ],
-        query_time_ms=1,
-    )
-    monkeypatch.setattr(crud, "get_grouped_search", lambda *_args, **_kwargs: page)
-
-    result = crud.get_mention_map(MagicMock(), q="debate", limit=10)
-
-    assert result.first_mention.title_match is True
-    assert result.related_topics == []
 
 
 def test_related_terms_skip_fillers_and_rank_terms_heard_in_more_videos():

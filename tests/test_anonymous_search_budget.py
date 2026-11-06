@@ -7,8 +7,8 @@ from unittest.mock import MagicMock, patch
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from app.schemas import MentionMap
-from app.search import budget, mention_cache
+from app.schemas import GroupedSearchResponse, MentionMap
+from app.search import budget, result_cache
 
 
 def request(path="/search/mention-map", cookie=None):
@@ -85,39 +85,68 @@ class BudgetTests(unittest.TestCase):
                 next(budget.anonymous_search_budget(request(path), object()))
 
 
+def corpus(version=1):
+    db = MagicMock()
+    db.execute.return_value.one.return_value = (version, 7, 3, "2026-11-05T00:00:00+00:00")
+    return db
+
+
 class CacheTests(unittest.TestCase):
     def setUp(self):
         self.redis = MagicMock()
         self.redis.get.return_value = None
-        patch.object(mention_cache, "get_redis_client", return_value=self.redis).start()
-        patch.object(mention_cache.settings, "ENABLE_CACHING", True).start()
-        self.search = patch.object(mention_cache.crud, "get_mention_map").start()
-        self.result = MentionMap(query="topic", total_moments=1, total_videos=1)
+        patch.object(result_cache, "get_redis_client", return_value=self.redis).start()
+        patch.object(result_cache.settings, "ENABLE_CACHING", True).start()
+        self.search = patch.object(result_cache.crud, "get_mention_map").start()
+        self.result = MentionMap(query="topic", total_moments=1, total_videos=1, query_time_ms=4000)
         self.search.return_value = self.result
         self.addCleanup(patch.stopall)
 
-    def test_hit_avoids_database_search(self):
+    def test_hit_avoids_database_search_and_reports_its_own_latency(self):
         self.redis.get.return_value = self.result.model_dump_json()
-        self.assertEqual(mention_cache.cached_mention_map(object(), q="topic"), self.result)
+        hit = result_cache.cached_mention_map(corpus(), q="topic")
+        self.assertEqual(hit.total_moments, 1)
+        self.assertLess(hit.query_time_ms, 4000)
         self.search.assert_not_called()
 
     def test_cache_key_covers_filters_and_hides_terms(self):
-        mention_cache.cached_mention_map(object(), q="private term", filters={"date_from": "2026-01-01"})
+        result_cache.cached_mention_map(corpus(), q="private term", filters={"date_from": "2026-01-01"})
         first = self.redis.get.call_args.args[0]
-        mention_cache.cached_mention_map(object(), q="private term", filters={"date_from": "2025-01-01"})
+        result_cache.cached_mention_map(corpus(), q="private term", filters={"date_from": "2025-01-01"})
         self.assertNotEqual(first, self.redis.get.call_args.args[0])
         self.assertNotIn("private term", first)
-        self.assertEqual(self.redis.setex.call_args.args[1], 60)
+        self.assertEqual(self.redis.setex.call_args.args[1], result_cache.RESULT_TTL_SECONDS)
+
+    def test_new_transcripts_change_the_key(self):
+        result_cache.cached_mention_map(corpus(1), q="topic")
+        first = self.redis.get.call_args.args[0]
+        result_cache.cached_mention_map(corpus(2), q="topic")
+        self.assertNotEqual(first, self.redis.get.call_args.args[0])
+
+    def test_grouped_and_mention_results_do_not_share_keys(self):
+        grouped = patch.object(result_cache.crud, "get_grouped_search").start()
+        grouped.return_value = GroupedSearchResponse(total_moments=0, total_videos=0, groups=[])
+        result_cache.cached_mention_map(corpus(), q="topic")
+        mention_key = self.redis.get.call_args.args[0]
+        result_cache.cached_grouped_search(corpus(), q="topic")
+        self.assertNotEqual(mention_key, self.redis.get.call_args.args[0])
+        grouped.assert_called_once()
 
     def test_redis_failure_falls_back(self):
         self.redis.get.side_effect = RuntimeError("unavailable")
         self.redis.setex.side_effect = RuntimeError("unavailable")
-        self.assertEqual(mention_cache.cached_mention_map(object(), q="topic"), self.result)
+        self.assertEqual(result_cache.cached_mention_map(corpus(), q="topic"), self.result)
         self.search.assert_called_once()
+
+    def test_unknown_corpus_version_skips_the_cache(self):
+        db = MagicMock()
+        db.execute.side_effect = RuntimeError("database busy")
+        self.assertEqual(result_cache.cached_mention_map(db, q="topic"), self.result)
+        self.redis.get.assert_not_called()
 
     def test_bad_cache_is_recomputed(self):
         self.redis.get.return_value = "broken JSON"
-        self.assertEqual(mention_cache.cached_mention_map(object(), q="topic"), self.result)
+        self.assertEqual(result_cache.cached_mention_map(corpus(), q="topic"), self.result)
         self.search.assert_called_once()
 
 

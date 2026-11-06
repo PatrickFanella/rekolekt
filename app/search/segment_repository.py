@@ -54,6 +54,131 @@ def _match_expressions(
     )
 
 
+def _video_filter_clauses(filters: dict[str, Any], params: dict[str, Any]) -> list[str]:
+    """Return the video-level filters shared by every search branch."""
+    clauses = []
+    if filters.get("date_from"):
+        clauses.append("v.broadcast_date >= CAST(:date_from AS date)")
+        params["date_from"] = filters["date_from"]
+    if filters.get("date_to"):
+        clauses.append("v.broadcast_date <= CAST(:date_to AS date)")
+        params["date_to"] = filters["date_to"]
+    if filters.get("min_duration") is not None:
+        clauses.append("v.duration_seconds >= :min_duration")
+        params["min_duration"] = filters["min_duration"]
+    if filters.get("max_duration") is not None:
+        clauses.append("v.duration_seconds <= :max_duration")
+        params["max_duration"] = filters["max_duration"]
+    if filters.get("category"):
+        clauses.append("v.category ILIKE :category")
+        params["category"] = filters["category"]
+    if filters.get("channel"):
+        clauses.append("v.channel_name ILIKE :channel")
+        params["channel"] = f"%{filters['channel']}%"
+    if filters.get("language"):
+        clauses.append("v.language = :language")
+        params["language"] = filters["language"]
+    return clauses
+
+
+def _native_branches(q, video_id, filters, params):
+    """WHERE clauses for native transcript hits and title-only native hits."""
+    text_match, highlighted_text, text_rank, title_match = _match_expressions("s", q, filters, params)
+    where_clauses = []
+    if video_id:
+        where_clauses.append("s.video_id = :vid")
+        params["vid"] = str(video_id)
+    where_clauses.extend(_video_filter_clauses(filters, params))
+    if filters.get("has_speaker_labels") is not None:
+        if filters["has_speaker_labels"]:
+            where_clauses.append("s.speaker_label IS NOT NULL")
+        else:
+            where_clauses.append("s.speaker_label IS NULL")
+    # The cross-table OR prevented the GIN predicate from narrowing the
+    # transcript scan. Disjoint branches retain every title-only segment
+    # and avoid duplicating segments which match both text and title.
+    text_where = [text_match, *where_clauses]
+    title_where = [title_match, f"({text_match}) IS NOT TRUE", *where_clauses]
+    return text_where, title_where, (text_match, highlighted_text, text_rank, title_match)
+
+
+def _youtube_branches(q, video_id, filters, params):
+    """WHERE clauses for caption hits and per-video caption title hits."""
+    text_match, highlighted_text, text_rank, title_match = _match_expressions("ys", q, filters, params)
+    # Keep transcript text search separate from title/youtube_id metadata search.
+    # Applying a title match directly to every youtube_segments row makes title
+    # searches scan/return every caption segment for matching videos.
+    text_where = [text_match]
+    title_where = [f"({title_match} OR v.youtube_id ILIKE :title_q)"]
+    if video_id:
+        text_where.append("yt.video_id = :vid")
+        title_where.append("yt.video_id = :vid")
+        params["vid"] = str(video_id)
+    video_filters = _video_filter_clauses(filters, params)
+    text_where.extend(video_filters)
+    title_where.extend(video_filters)
+    return text_where, title_where, (text_match, highlighted_text, text_rank, title_match)
+
+
+def _best_branches(q, video_id, filters, params):
+    """WHERE clauses for the four best-source branches: native and caption-only videos."""
+    native_match, native_highlight, native_rank, title_match = _match_expressions("s", q, filters, params)
+    youtube_match, youtube_highlight, youtube_rank, _ = _match_expressions("ys", q, filters, params)
+    native_where = [native_match]
+    native_title_where = [title_match]
+    youtube_where = [youtube_match]
+    youtube_title_where = [f"({title_match} OR v.youtube_id ILIKE :title_q)"]
+
+    if video_id:
+        native_where.append("s.video_id = :vid")
+        native_title_where.append("v.id = :vid")
+        youtube_where.append("yt.video_id = :vid")
+        youtube_title_where.append("yt.video_id = :vid")
+        params["vid"] = str(video_id)
+
+    video_filters = _video_filter_clauses(filters, params)
+    for clauses in (native_where, native_title_where, youtube_where, youtube_title_where):
+        clauses.extend(video_filters)
+    if filters.get("has_speaker_labels") is not None:
+        if filters["has_speaker_labels"]:
+            native_where.append("s.speaker_label IS NOT NULL")
+            native_title_where.append("s.speaker_label IS NOT NULL")
+            youtube_where.append("FALSE")
+        else:
+            native_where.append("s.speaker_label IS NULL")
+            native_title_where.append("s.speaker_label IS NULL")
+
+    youtube_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
+    youtube_title_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
+    return (
+        native_where,
+        native_title_where,
+        youtube_where,
+        youtube_title_where,
+        (native_match, native_highlight, native_rank, title_match),
+        (youtube_match, youtube_highlight, youtube_rank),
+    )
+
+
+_FIRST_NATIVE_SEGMENT = """
+                JOIN LATERAL (
+                    SELECT segment.id, segment.start_ms, segment.end_ms, segment.text, segment.speaker_label
+                    FROM segments segment
+                    WHERE segment.video_id = v.id
+                    ORDER BY segment.start_ms ASC
+                    LIMIT 1
+                ) s ON true"""
+
+_FIRST_CAPTION_SEGMENT = """
+                JOIN LATERAL (
+                    SELECT segment.id, segment.start_ms, segment.end_ms, segment.text
+                    FROM youtube_segments segment
+                    WHERE segment.youtube_transcript_id = yt.id
+                    ORDER BY segment.start_ms ASC
+                    LIMIT 1
+                ) ys ON true"""
+
+
 class SearchRepository:
     def search_native(
         self,
@@ -77,47 +202,9 @@ class SearchRepository:
             "headline_options": POSTGRES_HEADLINE_OPTIONS,
         }
         params["title_q"] = f"%{q.strip()}%"
-        text_match, highlighted_text, text_rank, title_match = _match_expressions("s", q, filters, params)
-
-        # Search transcript text and video title so newly processed videos are discoverable.
-        where_clauses = []
-
-        if video_id:
-            where_clauses.append("s.video_id = :vid")
-            params["vid"] = str(video_id)
-
-        # Join with videos table for title search, sorting, and filter support.
-        needs_video_join = True
-
-        if needs_video_join:
-            if filters.get("date_from"):
-                where_clauses.append("v.broadcast_date >= CAST(:date_from AS date)")
-                params["date_from"] = filters["date_from"]
-            if filters.get("date_to"):
-                where_clauses.append("v.broadcast_date <= CAST(:date_to AS date)")
-                params["date_to"] = filters["date_to"]
-            if filters.get("min_duration") is not None:
-                where_clauses.append("v.duration_seconds >= :min_duration")
-                params["min_duration"] = filters["min_duration"]
-            if filters.get("max_duration") is not None:
-                where_clauses.append("v.duration_seconds <= :max_duration")
-                params["max_duration"] = filters["max_duration"]
-            if filters.get("category"):
-                where_clauses.append("v.category ILIKE :category")
-                params["category"] = filters["category"]
-            if filters.get("channel"):
-                where_clauses.append("v.channel_name ILIKE :channel")
-                params["channel"] = f"%{filters['channel']}%"
-            if filters.get("language"):
-                where_clauses.append("v.language = :language")
-                params["language"] = filters["language"]
-
-        # Speaker labels filter
-        if filters.get("has_speaker_labels") is not None:
-            if filters["has_speaker_labels"]:
-                where_clauses.append("s.speaker_label IS NOT NULL")
-            else:
-                where_clauses.append("s.speaker_label IS NULL")
+        text_where, title_where, (text_match, highlighted_text, text_rank, title_match) = _native_branches(
+            q, video_id, filters, params
+        )
 
         # Build ORDER BY clause
         if sort_by == "date_desc":
@@ -131,8 +218,6 @@ class SearchRepository:
         else:  # relevance (default)
             order_by = "rank DESC, title_match DESC, s.start_ms ASC"
 
-        # Build query
-        from_clause = "segments s"
         select_fields = (
             "s.id, s.video_id, s.start_ms, s.end_ms, "
             f"CASE WHEN {text_match} "
@@ -141,15 +226,8 @@ class SearchRepository:
             f"{text_rank} AS rank, "
             f"CASE WHEN {title_match} THEN 1 ELSE 0 END AS title_match"
         )
+        from_clause = "segments s JOIN videos v ON s.video_id = v.id"
 
-        if needs_video_join:
-            from_clause = "segments s JOIN videos v ON s.video_id = v.id"
-
-        # The cross-table OR prevented the GIN predicate from narrowing the
-        # transcript scan. Disjoint branches retain every title-only segment
-        # and avoid duplicating segments which match both text and title.
-        text_where = [text_match, *where_clauses]
-        title_where = [title_match, f"({text_match}) IS NOT TRUE", *where_clauses]
         result_order = order_by.replace("v.", "").replace("s.", "")
         sql = f"""
             WITH native_text_hits AS (
@@ -204,51 +282,9 @@ class SearchRepository:
             "title_q": f"%{q.strip()}%",
             "headline_options": POSTGRES_HEADLINE_OPTIONS,
         }
-        text_match, highlighted_text, text_rank, title_match = _match_expressions("ys", q, filters, params)
-
-        # Keep transcript text search separate from title/youtube_id metadata search.
-        # Applying a title match directly to every youtube_segments row makes title
-        # searches scan/return every caption segment for matching videos.
-        text_where = [text_match]
-        title_where = [f"({title_match} OR v.youtube_id ILIKE :title_q)"]
-
-        if video_id:
-            text_where.append("yt.video_id = :vid")
-            title_where.append("yt.video_id = :vid")
-            params["vid"] = str(video_id)
-
-        # Join with videos table for filter support
-        needs_video_join = True
-
-        if needs_video_join:
-            if filters.get("date_from"):
-                text_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-                title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-                params["date_from"] = filters["date_from"]
-            if filters.get("date_to"):
-                text_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-                title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-                params["date_to"] = filters["date_to"]
-            if filters.get("min_duration") is not None:
-                text_where.append("v.duration_seconds >= :min_duration")
-                title_where.append("v.duration_seconds >= :min_duration")
-                params["min_duration"] = filters["min_duration"]
-            if filters.get("max_duration") is not None:
-                text_where.append("v.duration_seconds <= :max_duration")
-                title_where.append("v.duration_seconds <= :max_duration")
-                params["max_duration"] = filters["max_duration"]
-            if filters.get("category"):
-                text_where.append("v.category ILIKE :category")
-                title_where.append("v.category ILIKE :category")
-                params["category"] = filters["category"]
-            if filters.get("channel"):
-                text_where.append("v.channel_name ILIKE :channel")
-                title_where.append("v.channel_name ILIKE :channel")
-                params["channel"] = f"%{filters['channel']}%"
-            if filters.get("language"):
-                text_where.append("v.language = :language")
-                title_where.append("v.language = :language")
-                params["language"] = filters["language"]
+        text_where, title_where, (_text_match, highlighted_text, text_rank, _title_match) = _youtube_branches(
+            q, video_id, filters, params
+        )
 
         # Build ORDER BY clause
         if sort_by == "date_desc":
@@ -298,14 +334,7 @@ class SearchRepository:
                     v.title AS video_title,
                     v.channel_name
                 FROM youtube_transcripts yt
-                JOIN videos v ON yt.video_id = v.id
-                JOIN LATERAL (
-                    SELECT segment.id, segment.start_ms, segment.end_ms, segment.text
-                    FROM youtube_segments segment
-                    WHERE segment.youtube_transcript_id = yt.id
-                    ORDER BY segment.start_ms ASC
-                    LIMIT 1
-                ) ys ON true
+                JOIN videos v ON yt.video_id = v.id{_FIRST_CAPTION_SEGMENT}
                 WHERE {" AND ".join(title_where)}
                 ORDER BY yt.video_id, ys.start_ms ASC
             ), title_hits AS (
@@ -348,73 +377,14 @@ class SearchRepository:
             "title_q": f"%{q.strip()}%",
             "headline_options": POSTGRES_HEADLINE_OPTIONS,
         }
-        native_match, native_highlight, native_rank, title_match = _match_expressions("s", q, filters, params)
-        youtube_match, youtube_highlight, youtube_rank, _ = _match_expressions("ys", q, filters, params)
-        native_where = [native_match]
-        native_title_where = [title_match]
-        youtube_where = [youtube_match]
-        youtube_title_where = [f"({title_match} OR v.youtube_id ILIKE :title_q)"]
-
-        if video_id:
-            native_where.append("s.video_id = :vid")
-            native_title_where.append("v.id = :vid")
-            youtube_where.append("yt.video_id = :vid")
-            youtube_title_where.append("yt.video_id = :vid")
-            params["vid"] = str(video_id)
-
-        if filters.get("date_from"):
-            native_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-            native_title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-            youtube_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-            youtube_title_where.append("v.broadcast_date >= CAST(:date_from AS date)")
-            params["date_from"] = filters["date_from"]
-        if filters.get("date_to"):
-            native_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-            native_title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-            youtube_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-            youtube_title_where.append("v.broadcast_date <= CAST(:date_to AS date)")
-            params["date_to"] = filters["date_to"]
-        if filters.get("min_duration") is not None:
-            native_where.append("v.duration_seconds >= :min_duration")
-            native_title_where.append("v.duration_seconds >= :min_duration")
-            youtube_where.append("v.duration_seconds >= :min_duration")
-            youtube_title_where.append("v.duration_seconds >= :min_duration")
-            params["min_duration"] = filters["min_duration"]
-        if filters.get("max_duration") is not None:
-            native_where.append("v.duration_seconds <= :max_duration")
-            native_title_where.append("v.duration_seconds <= :max_duration")
-            youtube_where.append("v.duration_seconds <= :max_duration")
-            youtube_title_where.append("v.duration_seconds <= :max_duration")
-            params["max_duration"] = filters["max_duration"]
-        if filters.get("channel"):
-            native_where.append("v.channel_name ILIKE :channel")
-            native_title_where.append("v.channel_name ILIKE :channel")
-            youtube_where.append("v.channel_name ILIKE :channel")
-            youtube_title_where.append("v.channel_name ILIKE :channel")
-            params["channel"] = f"%{filters['channel']}%"
-        if filters.get("category"):
-            native_where.append("v.category ILIKE :category")
-            native_title_where.append("v.category ILIKE :category")
-            youtube_where.append("v.category ILIKE :category")
-            youtube_title_where.append("v.category ILIKE :category")
-            params["category"] = filters["category"]
-        if filters.get("language"):
-            native_where.append("v.language = :language")
-            native_title_where.append("v.language = :language")
-            youtube_where.append("v.language = :language")
-            youtube_title_where.append("v.language = :language")
-            params["language"] = filters["language"]
-        if filters.get("has_speaker_labels") is not None:
-            if filters["has_speaker_labels"]:
-                native_where.append("s.speaker_label IS NOT NULL")
-                native_title_where.append("s.speaker_label IS NOT NULL")
-                youtube_where.append("FALSE")
-            else:
-                native_where.append("s.speaker_label IS NULL")
-                native_title_where.append("s.speaker_label IS NULL")
-
-        youtube_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
-        youtube_title_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
+        (
+            native_where,
+            native_title_where,
+            youtube_where,
+            youtube_title_where,
+            (native_match, native_highlight, native_rank, title_match),
+            (youtube_match, youtube_highlight, youtube_rank),
+        ) = _best_branches(q, video_id, filters, params)
 
         if sort_by == "date_desc":
             order_by = "broadcast_date DESC NULLS LAST, start_ms ASC"
@@ -466,14 +436,7 @@ class SearchRepository:
                     v.duration_seconds,
                     v.title AS video_title,
                     v.channel_name
-                FROM videos v
-                JOIN LATERAL (
-                    SELECT segment.id, segment.start_ms, segment.end_ms, segment.text, segment.speaker_label
-                    FROM segments segment
-                    WHERE segment.video_id = v.id
-                    ORDER BY segment.start_ms ASC
-                    LIMIT 1
-                ) s ON true
+                FROM videos v{_FIRST_NATIVE_SEGMENT}
                 WHERE {" AND ".join(native_title_where)}
                 ORDER BY {order_by}
                 LIMIT :branch_limit
@@ -517,14 +480,7 @@ class SearchRepository:
                     v.title AS video_title,
                     v.channel_name
                 FROM youtube_transcripts yt
-                JOIN videos v ON yt.video_id = v.id
-                JOIN LATERAL (
-                    SELECT segment.id, segment.start_ms, segment.end_ms, segment.text
-                    FROM youtube_segments segment
-                    WHERE segment.youtube_transcript_id = yt.id
-                    ORDER BY segment.start_ms ASC
-                    LIMIT 1
-                ) ys ON true
+                JOIN videos v ON yt.video_id = v.id{_FIRST_CAPTION_SEGMENT}
                 WHERE {" AND ".join(youtube_title_where)}
                 ORDER BY video_id, start_ms ASC
             ), youtube_title_hits AS (
@@ -549,3 +505,86 @@ class SearchRepository:
         rows = _execute_search(db, sql, params).mappings().all()
         search_queries_total.labels(backend="postgres").inc()
         return normalize_search_rows(rows)
+
+    def mention_counts(
+        self,
+        db,
+        q: str,
+        source: str = "best",
+        video_id: str | None = None,
+        filters: dict[str, Any] | None = None,
+    ):
+        """Count every matched moment per video in one pass.
+
+        The branches mirror the search methods so the counts agree with paging
+        through the complete result set, without ranking or highlighting it.
+        ``spoken`` excludes title-only moments, and the ``*_spoken_ms`` columns
+        bound the spoken ones.
+        """
+        filters = filters or {}
+        params: dict[str, Any] = {"q": q, "title_q": f"%{q.strip()}%"}
+        if source == "best":
+            native_where, native_title_where, youtube_where, youtube_title_where, _native, _youtube = _best_branches(
+                q, video_id, filters, params
+            )
+            branches = [
+                f"""SELECT s.video_id, s.start_ms, false AS title_only
+                FROM segments s JOIN videos v ON s.video_id = v.id
+                WHERE {" AND ".join(native_where)}""",
+                f"""SELECT v.id AS video_id, s.start_ms, true AS title_only
+                FROM videos v{_FIRST_NATIVE_SEGMENT}
+                WHERE {" AND ".join(native_title_where)}""",
+                f"""SELECT yt.video_id, ys.start_ms, false AS title_only
+                FROM youtube_segments ys
+                JOIN youtube_transcripts yt ON yt.id = ys.youtube_transcript_id
+                JOIN videos v ON yt.video_id = v.id
+                WHERE {" AND ".join(youtube_where)}""",
+                f"""SELECT DISTINCT ON (yt.video_id) yt.video_id, ys.start_ms, true AS title_only
+                FROM youtube_transcripts yt
+                JOIN videos v ON yt.video_id = v.id{_FIRST_CAPTION_SEGMENT}
+                WHERE {" AND ".join(youtube_title_where)}
+                ORDER BY yt.video_id, ys.start_ms ASC""",
+            ]
+        elif source == "native":
+            text_where, title_where, _expressions = _native_branches(q, video_id, filters, params)
+            branches = [
+                f"""SELECT s.video_id, s.start_ms, false AS title_only
+                FROM segments s JOIN videos v ON s.video_id = v.id
+                WHERE {" AND ".join(text_where)}""",
+                f"""SELECT s.video_id, s.start_ms, true AS title_only
+                FROM segments s JOIN videos v ON s.video_id = v.id
+                WHERE {" AND ".join(title_where)}""",
+            ]
+        else:
+            text_where, title_where, _expressions = _youtube_branches(q, video_id, filters, params)
+            branches = [
+                f"""SELECT yt.video_id, ys.start_ms, false AS title_only
+                FROM youtube_segments ys
+                JOIN youtube_transcripts yt ON yt.id = ys.youtube_transcript_id
+                JOIN videos v ON yt.video_id = v.id
+                WHERE {" AND ".join(text_where)}""",
+                f"""SELECT DISTINCT ON (yt.video_id) yt.video_id, ys.start_ms, true AS title_only
+                FROM youtube_transcripts yt
+                JOIN videos v ON yt.video_id = v.id{_FIRST_CAPTION_SEGMENT}
+                WHERE {" AND ".join(title_where)}
+                ORDER BY yt.video_id, ys.start_ms ASC""",
+            ]
+        union = "\n                UNION ALL\n                ".join(f"({branch})" for branch in branches)
+        sql = f"""
+            WITH hits AS (
+                {union}
+            )
+            SELECT hits.video_id,
+                   v.broadcast_date,
+                   v.created_at,
+                   count(*) AS moments,
+                   count(*) FILTER (WHERE NOT hits.title_only) AS spoken,
+                   min(hits.start_ms) AS first_any_ms,
+                   max(hits.start_ms) AS last_any_ms,
+                   min(hits.start_ms) FILTER (WHERE NOT hits.title_only) AS first_spoken_ms,
+                   max(hits.start_ms) FILTER (WHERE NOT hits.title_only) AS last_spoken_ms
+            FROM hits
+            JOIN videos v ON v.id = hits.video_id
+            GROUP BY hits.video_id, v.broadcast_date, v.created_at
+        """
+        return _execute_search(db, sql, params).mappings().all()
