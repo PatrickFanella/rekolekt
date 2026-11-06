@@ -425,13 +425,14 @@ def _persist_transcript(ctx: VideoPipelineContext, deps: NativePipelineDependenc
             if "words" in s and s["words"]:
                 word_ts_json = json.dumps(s["words"])
 
-            conn.execute(
+            segment_id = conn.execute(
                 text("""
                 INSERT INTO segments (
                     video_id,start_ms,end_ms,text,speaker_label,confidence,
-                    avg_logprob,temperature,token_count,word_timestamps
+                    avg_logprob,temperature,token_count
                 )
-                VALUES (:v,:s,:e,:txt,:spk,:conf,:lp,:temp,:tc,:wts)
+                VALUES (:v,:s,:e,:txt,:spk,:conf,:lp,:temp,:tc)
+                RETURNING id
             """),
                 {
                     "v": ctx.video_id,
@@ -443,9 +444,13 @@ def _persist_transcript(ctx: VideoPipelineContext, deps: NativePipelineDependenc
                     "lp": s.get("avg_logprob"),
                     "temp": s.get("temperature"),
                     "tc": s.get("token_count"),
-                    "wts": word_ts_json,
                 },
-            )
+            ).scalar_one()
+            if word_ts_json is not None:
+                conn.execute(
+                    text("INSERT INTO segment_words (segment_id, words) VALUES (:id, CAST(:w AS jsonb))"),
+                    {"id": segment_id, "w": word_ts_json},
+                )
 
         blocks = build_transcript_blocks(
             [

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import uuid
 from dataclasses import dataclass
@@ -290,3 +291,43 @@ def test_custom_vocabulary_uses_authoritative_job_owner_not_metadata(tmp_path: P
     with patch("worker.vocabulary.apply_vocabulary_corrections", apply):
         _apply_custom_vocabulary(ctx, NativePipelineDependencies(settings=settings, logger=Mock()))
     assert apply.call_args.args[2] == authoritative_owner
+
+
+def test_persist_stage_stores_word_timings_beside_the_segment(tmp_path: Path):
+    video_id = uuid.uuid4()
+    engine, conn = _mock_engine_with_video({"id": video_id, "youtube_id": "abc123", "job_id": uuid.uuid4()})
+    words = [{"word": "hello", "start": 0.0, "end": 0.4}]
+    ctx = VideoPipelineContext(
+        engine=engine,
+        video={"id": video_id, "youtube_id": "abc123", "job_id": uuid.uuid4()},
+        work_dir=tmp_path,
+        diarization_state="skipped",
+        diar_segments=[
+            {"start": 0.0, "end": 1.0, "text": "hello", "speaker": None, "words": words},
+            {"start": 1.0, "end": 2.0, "text": "again", "speaker": None},
+        ],
+        detected_language="en",
+        language_probability=0.9,
+    )
+
+    def execute(statement, *args, **kwargs):
+        result = Mock()
+        result.mappings.return_value.first.return_value = {"id": video_id}
+        result.scalar_one.return_value = 41
+        result.rowcount = 1
+        return result
+
+    conn.execute.side_effect = execute
+    deps = NativePipelineDependencies(
+        settings=_Settings(), logger=Mock(), replace_transcript_blocks=Mock(), refresh_job_state=Mock()
+    )
+
+    _persist_transcript(ctx, deps)
+
+    segment_inserts = [c for c in conn.execute.call_args_list if "INSERT INTO segments" in str(c.args[0])]
+    word_inserts = [c for c in conn.execute.call_args_list if "INSERT INTO segment_words" in str(c.args[0])]
+    assert len(segment_inserts) == 2
+    assert all("word_timestamps" not in str(c.args[0]) for c in segment_inserts)
+    assert len(word_inserts) == 1
+    assert word_inserts[0].args[1]["id"] == 41
+    assert json.loads(word_inserts[0].args[1]["w"]) == words
