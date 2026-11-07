@@ -15,3 +15,5 @@ Access requirements are in [the access matrix](access-matrix.md). `GET /support`
 The opt-in [podcast feed](product/podcast-feed.md) (`PODCAST_FEED_ENABLED`) adds `GET /feeds/recordings.rss`, an RSS 2.0 feed of completed recordings with `podcast:transcript` and `podcast:chapters` links and no enclosures, and `GET /videos/{video_id}/podcast-chapters.json`, published chapters in the Podcasting 2.0 JSON chapters format.
 
 `GET /videos/{video_id}/transcript` and `transcript.json` accept `include=words` to add stored Whisper [word timings](product/word-timings.md) to each segment, bounded to 100,000 words per response.
+
+[Chat replay](product/chat-replay.md) serves imported chat for a recording by time range at `GET /videos/{video_id}/chat`. It returns 404 unless `CHAT_REPLAY_ENABLED` is set.

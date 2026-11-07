@@ -30,6 +30,7 @@ PUBLIC_CACHE_POLICIES = {
     ("GET", "/search/popular"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}"): "public, max-age=300, stale-while-revalidate=60",
+    ("GET", "/videos/{video_id}/chat"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}/chapters"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}/podcast-chapters.json"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/feeds/recordings.rss"): "public, max-age=300, stale-while-revalidate=60",

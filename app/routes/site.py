@@ -51,6 +51,7 @@ class SiteConfig(BrandProfile):
     theme: BrandTheme = Field(default_factory=BrandTheme, description=_THEME_DEPRECATION)
     public_passages_enabled: bool
     clip_exports_enabled: bool
+    chat_replay_enabled: bool
     atproto_enabled: bool
     community_enabled: bool
 
@@ -67,4 +68,5 @@ def site_config():
         community_enabled=settings.COMMUNITY_ENABLED,
         atproto_enabled=settings.ATPROTO_ENABLED,
         clip_exports_enabled=settings.CLIP_EXPORTS_ENABLED,
+        chat_replay_enabled=settings.CHAT_REPLAY_ENABLED,
     )

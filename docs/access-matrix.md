@@ -18,5 +18,6 @@
 | API key issuance | authenticated owner; admin scopes require audited admin issuance |
 | Job requeue/quarantine/attempt administration and opinion correction | admin |
 | Source deletion | owner or admin |
+| Chat replay (`GET /videos/{video_id}/chat`) | public GET; opt-in feature; chat is imported by an operator CLI, not the API |
 
 API-key read scopes are `search:read`, `videos:read`, `exports:read`, and `jobs:read`; mutation scope is `jobs:write`.

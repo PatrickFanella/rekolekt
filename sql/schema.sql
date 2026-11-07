@@ -708,3 +708,25 @@ CREATE TABLE community_reports (
     UNIQUE(post_id, reporter_id)
 );
 CREATE INDEX community_reports_queue ON community_reports(status, created_at);
+CREATE TABLE chat_imports (
+    video_id UUID PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    source_format TEXT NOT NULL CHECK (source_format IN ('twitchdownloader', 'rustlog')),
+    source_name TEXT NOT NULL CHECK (length(source_name) BETWEEN 1 AND 255),
+    source_digest TEXT NOT NULL CHECK (source_digest ~ '^[0-9a-f]{64}$'),
+    broadcast_started_at TIMESTAMPTZ,
+    alignment_method TEXT NOT NULL CHECK (alignment_method IN ('manual', 'audio')),
+    alignment_mapping JSONB NOT NULL CHECK (jsonb_typeof(alignment_mapping) = 'array'),
+    alignment_confidence DOUBLE PRECISION CHECK (alignment_confidence BETWEEN 0 AND 1),
+    message_count INTEGER NOT NULL CHECK (message_count >= 0),
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((alignment_method = 'manual') = (alignment_confidence IS NULL))
+);
+CREATE TABLE chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    video_id UUID NOT NULL REFERENCES chat_imports(video_id) ON DELETE CASCADE,
+    offset_ms INTEGER NOT NULL CHECK (offset_ms >= 0),
+    author TEXT NOT NULL CHECK (length(author) BETWEEN 1 AND 64),
+    body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1000),
+    metadata JSONB
+);
+CREATE INDEX chat_messages_video_offset ON chat_messages (video_id, offset_ms, id);
