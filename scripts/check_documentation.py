@@ -20,6 +20,7 @@ CANONICAL = (
     "docs/development/transcript-processing.md",
     "docs/operations/production-readiness.md",
     "docs/product/passage-sharing.md",
+    "docs/product/word-timings.md",
     "docs/user-testing/private-beta.md",
 )
 LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")

@@ -4,8 +4,9 @@ import json
 import uuid
 from datetime import datetime
 from io import BytesIO
+from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import LETTER
@@ -26,6 +27,7 @@ from ..settings import settings
 from ..transcripts.merged import build_merged_transcript
 from ..transcripts.service import TranscriptPresentationService
 from ..transcripts.types import TranscriptSegment
+from ..transcripts.words import words_for_segments
 from ..transcripts.youtube_formatting import build_youtube_caption_blocks, format_youtube_caption_text
 
 router = APIRouter(prefix="", tags=["Exports"])
@@ -107,13 +109,13 @@ def _log_export(db, request: Request, user, payload: dict):
     exports_total.labels(format=fmt).inc()
 
 
-def _load_best_export_source(db, video_id: uuid.UUID):
+def _load_best_export_source(db, video_id: uuid.UUID, include_words: bool = False):
     """Return merged rows when possible, otherwise Whisper or formatted YouTube."""
     v = crud.get_video(db, video_id)
     if not v:
         raise VideoNotFoundError(str(video_id))
 
-    segs = crud.list_segments(db, video_id)
+    segs = crud.list_segments_with_words(db, video_id) if include_words else crud.list_segments(db, video_id)
     yt = crud.get_youtube_transcript(db, video_id)
     if segs and yt:
         whisper_segments = [transcript_presentation_service.from_db_row(r) for r in segs]
@@ -319,6 +321,11 @@ def get_native_transcript_vtt(video_id: uuid.UUID, request: Request, db=Depends(
     description="""
     Download Whisper-generated transcript in JSON format with full segment data.
 
+    `include=words` adds each Whisper segment's word timings (`words`, null when none are
+    stored) and the top-level `word_timings` and `word_timings_note` fields, with the same
+    rules and 100,000-word limit as `GET /videos/{video_id}/transcript`. YouTube and merged
+    exports report `word_timings: "unavailable"`.
+
     **Authentication Required:** Yes
     """,
     responses={
@@ -341,7 +348,12 @@ def get_native_transcript_vtt(video_id: uuid.UUID, request: Request, db=Depends(
         503: {"description": "Transcript not ready"},
     },
 )
-def get_native_transcript_json(video_id: uuid.UUID, request: Request, db=Depends(get_db)):
+def get_native_transcript_json(
+    video_id: uuid.UUID,
+    request: Request,
+    include: Optional[Literal["words"]] = Query(None, description="Set to `words` to add Whisper word timings"),
+    db=Depends(get_db),
+):
     """Export best available transcript as JSON."""
     user = get_user_from_session(db, get_session_token(request))
     gate = _require_export_auth(
@@ -352,7 +364,9 @@ def get_native_transcript_json(video_id: uuid.UUID, request: Request, db=Depends
     )
     if gate is not None:
         return gate
-    source, _v, segs, blocks = _load_best_export_source(db, video_id)
+    with_words = include == "words"
+    source, _v, segs, blocks = _load_best_export_source(db, video_id, include_words=with_words)
+    payload: dict
     if source == "youtube":
         payload = {
             "video_id": str(video_id),
@@ -378,6 +392,16 @@ def get_native_transcript_json(video_id: uuid.UUID, request: Request, db=Depends
             "source_label": "Whisper transcript",
             "segments": [{"start_ms": r[0], "end_ms": r[1], "text": r[2], "speaker_label": r[3]} for r in segs],
         }
+    if with_words:
+        if source == "native":
+            words, status, note = words_for_segments(segs)
+        else:
+            words = [None] * len(payload["segments"])
+            status, note = "unavailable", "youtube_captions" if source == "youtube" else "merged_transcript"
+        for segment, segment_words in zip(payload["segments"], words, strict=True):
+            segment["words"] = segment_words
+        payload["word_timings"] = status
+        payload["word_timings_note"] = note
     _log_export(db, request, user, {"format": "json", "source": source, "policy": "best", "video_id": str(video_id)})
     suffix = ".youtube" if source == "youtube" else (".merged" if source == "merged" else "")
     headers = {"Content-Disposition": f"attachment; filename=video-{video_id}{suffix}.json"}
