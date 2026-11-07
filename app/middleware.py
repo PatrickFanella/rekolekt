@@ -31,6 +31,8 @@ PUBLIC_CACHE_POLICIES = {
     ("GET", "/videos"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}/chapters"): "public, max-age=300, stale-while-revalidate=60",
+    ("GET", "/videos/{video_id}/podcast-chapters.json"): "public, max-age=300, stale-while-revalidate=60",
+    ("GET", "/feeds/recordings.rss"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}/transcript"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/videos/{video_id}/youtube-transcript"): "public, max-age=300, stale-while-revalidate=60",
     ("GET", "/archive/summary"): "public, max-age=300, stale-while-revalidate=60",

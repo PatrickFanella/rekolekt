@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Podcast Index JSON chapters format 1.2.0, transcribed from https://github.com/Podcastindex-org/podcast-namespace/blob/main/docs/examples/chapters/jsonChapters.md (CC0).",
+  "type": "object",
+  "required": ["version", "chapters"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "string", "pattern": "^1\\.[0-9]+\\.[0-9]+$"},
+    "author": {"type": "string"},
+    "title": {"type": "string"},
+    "podcastName": {"type": "string"},
+    "description": {"type": "string"},
+    "fileName": {"type": "string"},
+    "waypoints": {"type": "boolean"},
+    "chapters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["startTime"],
+        "additionalProperties": false,
+        "properties": {
+          "startTime": {"type": "number", "minimum": 0},
+          "endTime": {"type": "number", "minimum": 0},
+          "title": {"type": "string"},
+          "img": {"type": "string"},
+          "url": {"type": "string"},
+          "toc": {"type": "boolean"},
+          "location": {
+            "type": "object",
+            "required": ["name", "geo"],
+            "properties": {
+              "name": {"type": "string"},
+              "geo": {"type": "string"},
+              "osm": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

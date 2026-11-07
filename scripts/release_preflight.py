@@ -10,16 +10,26 @@ client overlay and state mounts.
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn, Sequence
 from urllib.parse import urlparse
 
 CORE_ROOT = Path(__file__).resolve().parent.parent
+# Loaded by path: the release host runs this script without the application's dependencies.
+_RULES_SPEC = importlib.util.spec_from_file_location(
+    "_preflight_channel_sync_rules", CORE_ROOT / "app" / "channel_sync_rules.py"
+)
+if _RULES_SPEC is None or _RULES_SPEC.loader is None:
+    raise ImportError("app/channel_sync_rules.py is missing from the core checkout")
+channel_sync_rules = importlib.util.module_from_spec(_RULES_SPEC)
+sys.modules[_RULES_SPEC.name] = channel_sync_rules  # dataclasses resolve their module by name
+_RULES_SPEC.loader.exec_module(channel_sync_rules)
 DIGEST_RE = re.compile(r"^[^\s@]+@sha256:[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 IMAGE_ROLES = {"api", "ingest-cuda", "ml-cuda", "postgres-walg", "redis"}
@@ -339,6 +349,42 @@ def validate_rendered_services(rendered: dict[str, Any], services: set[str], man
             fail("Compose API security environment contract is invalid")
 
 
+def worker_host_path(worker: dict[str, Any], container_path: str) -> Path:
+    """Map a worker container path to its host file through the worker's bind mounts."""
+    path = PurePosixPath(container_path)
+    best: tuple[PurePosixPath, str] | None = None
+    for volume in worker.get("volumes") or ():
+        if not isinstance(volume, dict) or volume.get("type") != "bind":
+            continue
+        target, source = volume.get("target"), volume.get("source")
+        if not isinstance(target, str) or not isinstance(source, str):
+            continue
+        mount = PurePosixPath(target)
+        if (path == mount or mount in path.parents) and (best is None or len(mount.parts) > len(best[0].parts)):
+            best = (mount, source)
+    if not path.is_absolute() or best is None:
+        fail("CHANNEL_SYNC_CONFIG is not on a worker bind mount")
+    mount, source = best
+    return Path(source).joinpath(*path.relative_to(mount).parts)
+
+
+def validate_channel_sync_config(rendered: dict[str, Any]) -> None:
+    """Apply the worker's startup validation of the recurring channel sync rules."""
+    worker = rendered.get("services", {}).get("worker")
+    environment = worker.get("environment") if isinstance(worker, dict) else None
+    if not isinstance(worker, dict) or not isinstance(environment, dict):
+        return
+    raw_urls = environment.get("CHANNEL_SYNC_URLS") or ""
+    config_path = environment.get("CHANNEL_SYNC_CONFIG") or ""
+    if not isinstance(raw_urls, str) or not isinstance(config_path, str):
+        fail("channel sync configuration is invalid")
+    host_path = str(worker_host_path(worker, config_path)) if config_path else ""
+    try:
+        channel_sync_rules.load_sync_channels(raw_urls, host_path)
+    except ValueError as error:
+        fail(str(error))
+
+
 def diarization_env_path_from_operator_file() -> Path:
     """Read the diarization env-file path from the selected Compose env file."""
     operator_env_file = Path(os.environ.get("HASANARA_ENV_FILE", ".env.prod"))
@@ -549,6 +595,7 @@ def validate(
     except json.JSONDecodeError:
         fail("Compose rendered invalid JSON")
     validate_rendered_services(rendered, services, manifest)
+    validate_channel_sync_config(rendered)
     diarization_result = compose_checked(
         root, ("--profile", "diarization", "config", "--format", "json"), "Compose diarization rendering failed"
     )

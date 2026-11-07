@@ -1,5 +1,7 @@
 import os
 import warnings
+from datetime import datetime, timezone
+from importlib import metadata
 from typing import Any, Optional
 
 from app.logging_config import get_logger
@@ -17,6 +19,39 @@ _torch_whisper: Optional[Any] = None
 
 _model: Optional[Any] = None
 _fallback_ct2_model: Optional[Any] = None
+# What actually loaded: model, backend, device, compute type and library version.
+_model_engine: Optional[dict[str, Any]] = None
+_model_loaded_at: Optional[datetime] = None
+_fallback_engine: Optional[dict[str, Any]] = None
+
+_BACKEND_DISTRIBUTIONS = {"faster-whisper": "faster-whisper", "whisper": "openai-whisper"}
+
+
+def _engine(model_name: str, backend: str, device: Any, compute_type: str) -> dict[str, Any]:
+    try:
+        version: Optional[str] = metadata.version(_BACKEND_DISTRIBUTIONS[backend])
+    except Exception:
+        version = None
+    return {
+        "model": model_name,
+        "backend": backend,
+        "device": str(device),
+        "compute_type": compute_type,
+        "version": version,
+    }
+
+
+def _ct2_engine(model: Any, model_name: str, device: str, compute_type: str) -> dict[str, Any]:
+    # faster-whisper resolves device="auto"; report the device CTranslate2 chose when it says.
+    resolved = getattr(getattr(model, "model", None), "device", None)
+    return _engine(model_name, "faster-whisper", resolved if isinstance(resolved, str) else device, compute_type)
+
+
+def loaded_engine() -> Optional[dict[str, Any]]:
+    """Return the primary engine this process has loaded, with its load time, or None."""
+    if _model_engine is None or _model_loaded_at is None:
+        return None
+    return {**_model_engine, "loaded_at": _model_loaded_at}
 
 
 def _lazy_import_ct2():
@@ -89,12 +124,14 @@ def _get_model():
 
     from worker.metrics import whisper_model_load_seconds
 
-    global _model
+    global _model, _model_engine, _model_loaded_at
     if _model is None:
         load_start = time.time()
         if settings.WHISPER_BACKEND == "whisper":
             # PyTorch Whisper path (ROCm-compatible when torch is ROCm build)
             _model = _try_load_torch(settings.WHISPER_MODEL, settings.FORCE_GPU)
+            # transcribe_chunk always decodes with fp16=False.
+            _model_engine = _engine(settings.WHISPER_MODEL, "whisper", getattr(_model, "device", "unknown"), "float32")
         else:
             # faster-whisper (CTranslate2) path
             if settings.FORCE_GPU:
@@ -116,6 +153,8 @@ def _get_model():
                                     extra={"device": dev, "model": model_name, "compute_type": ctype},
                                 )
                                 _model = _try_load_ct2(model_name, device=dev, compute_type=ctype)
+                                _model_engine = _ct2_engine(_model, model_name, dev, ctype)
+                                _model_loaded_at = datetime.now(timezone.utc)
                                 logger.info(
                                     "Model loaded on GPU successfully",
                                     extra={"device": dev, "model": model_name, "compute_type": ctype},
@@ -137,12 +176,16 @@ def _get_model():
                 raise RuntimeError(f"FORCE_GPU is true but no GPU configuration succeeded: {last_err}")
             else:
                 # Device auto, try half then float32
+                ctype = "float16"
                 try:
-                    _model = _try_load_ct2(settings.WHISPER_MODEL, device="auto", compute_type="float16")
+                    _model = _try_load_ct2(settings.WHISPER_MODEL, device="auto", compute_type=ctype)
                 except Exception:
                     logger.warning("Half precision failed; retrying with float32 on device=auto")
-                    _model = _try_load_ct2(settings.WHISPER_MODEL, device="auto", compute_type="float32")
+                    ctype = "float32"
+                    _model = _try_load_ct2(settings.WHISPER_MODEL, device="auto", compute_type=ctype)
+                _model_engine = _ct2_engine(_model, settings.WHISPER_MODEL, "auto", ctype)
 
+        _model_loaded_at = datetime.now(timezone.utc)
         load_duration = time.time() - load_start
         whisper_model_load_seconds.labels(model=settings.WHISPER_MODEL, backend=settings.WHISPER_BACKEND).observe(
             load_duration
@@ -153,7 +196,7 @@ def _get_model():
 
 def _get_ct2_fallback_model():
     """Load a ROCm HIP CTranslate2 model as a fallback when PyTorch whisper crashes on ROCm."""
-    global _fallback_ct2_model
+    global _fallback_ct2_model, _fallback_engine
     if _fallback_ct2_model is None:
         try_order = [
             (settings.WHISPER_MODEL, "auto", "float32"),
@@ -164,6 +207,7 @@ def _get_ct2_fallback_model():
         for model_name, dev, ctype in try_order:
             try:
                 _fallback_ct2_model = _try_load_ct2(model_name, device=dev, compute_type=ctype)
+                _fallback_engine = _ct2_engine(_fallback_ct2_model, model_name, dev, ctype)
                 logger.info("CT2 fallback loaded: model=%s device=%s compute=%s", model_name, dev, ctype)
                 break
             except Exception as e:
@@ -195,7 +239,8 @@ def transcribe_chunk(
         initial_prompt: Vocabulary and style hint supplied to the decoder
 
     Returns:
-        Tuple of (segments_list, language_info_dict)
+        Tuple of (segments_list, language_info_dict). ``language_info_dict["engine"]`` describes
+        the model, backend, device, compute type and library version that produced the segments.
     """
     model = _get_model()
 
@@ -319,6 +364,7 @@ def transcribe_chunk(
                 lang_info = {
                     "language": detected_language,
                     "language_probability": language_probability,
+                    "engine": _fallback_engine,
                 }
                 return out, lang_info
             else:
@@ -337,7 +383,7 @@ def transcribe_chunk(
             if word_timestamps and "words" in seg:
                 seg_dict["words"] = seg["words"]
             out.append(seg_dict)
-        lang_info = {"language": detected_language, "language_probability": None}
+        lang_info = {"language": detected_language, "language_probability": None, "engine": _model_engine}
         return out, lang_info
     else:
         # faster-whisper backend
@@ -377,5 +423,6 @@ def transcribe_chunk(
         lang_info = {
             "language": detected_language,
             "language_probability": language_probability,
+            "engine": _model_engine,
         }
         return out, lang_info

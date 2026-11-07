@@ -771,6 +771,10 @@ def test_deploy_runs_strict_preflight_in_a_clean_operator_tree(tmp_path: Path) -
     scripts.mkdir(parents=True)
     for source in ("release_preflight.py", "compose_prod.sh"):
         shutil.copy2(ROOT / "scripts" / source, scripts / source)
+    (core / "app").mkdir()
+    shutil.copy2(ROOT / "app" / "channel_sync_rules.py", core / "app" / "channel_sync_rules.py")
+    # As in the real checkout, bytecode from loading the rules module stays ignored.
+    (core / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
     for compose_file in preflight.COMPOSE_FILES:
         if compose_file != preflight.CLIENT_OVERLAY:
             (core / compose_file).write_text("services: {}\n", encoding="utf-8")
@@ -1878,3 +1882,61 @@ def test_compose_render_with_inert_values_when_available(tmp_path: Path, monkeyp
         if service in preflight.APPLICATION_SERVICES | {"diarization-worker"}:
             assert environment["ENVIRONMENT"] == "production"
             assert environment["LOG_LEVEL"] == "INFO"
+
+
+def _worker_with_channel_sync(config_source: Path, environment: dict[str, str]) -> dict[str, Any]:
+    return {
+        "services": {
+            "worker": {
+                "environment": environment,
+                "volumes": [
+                    {"type": "bind", "source": "/srv/data", "target": "/data"},
+                    {"type": "bind", "source": str(config_source), "target": "/app/config/channel-sync"},
+                ],
+            }
+        }
+    }
+
+
+def test_channel_sync_config_is_checked_through_the_worker_bind_mount(tmp_path: Path) -> None:
+    (tmp_path / "rules.json").write_text(
+        json.dumps({"channels": [{"url": "https://youtube.com/@one/videos", "min_duration_seconds": 600}]}),
+        encoding="utf-8",
+    )
+    rendered = _worker_with_channel_sync(
+        tmp_path, {"CHANNEL_SYNC_CONFIG": "/app/config/channel-sync/rules.json", "CHANNEL_SYNC_URLS": ""}
+    )
+    with pytest.raises(preflight.PreflightError, match=r"channels\[0\]: missing_duration is required"):
+        preflight.validate_channel_sync_config(rendered)
+
+    (tmp_path / "rules.json").write_text(
+        json.dumps(
+            {
+                "channels": [
+                    {
+                        "url": "https://youtube.com/@one/videos",
+                        "min_duration_seconds": 600,
+                        "missing_duration": "include",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    preflight.validate_channel_sync_config(rendered)
+
+    rendered["services"]["worker"]["environment"]["CHANNEL_SYNC_URLS"] = "https://youtube.com/@one/videos"
+    with pytest.raises(preflight.PreflightError, match="more than once"):
+        preflight.validate_channel_sync_config(rendered)
+
+
+def test_channel_sync_config_must_be_mounted_into_the_worker(tmp_path: Path) -> None:
+    rendered = _worker_with_channel_sync(tmp_path, {"CHANNEL_SYNC_CONFIG": "/etc/rules.json"})
+    with pytest.raises(preflight.PreflightError, match="not on a worker bind mount"):
+        preflight.validate_channel_sync_config(rendered)
+
+
+def test_channel_sync_preflight_accepts_urls_without_a_rules_file() -> None:
+    preflight.validate_channel_sync_config(
+        {"services": {"worker": {"environment": {"CHANNEL_SYNC_URLS": "https://youtube.com/@one/videos"}}}}
+    )

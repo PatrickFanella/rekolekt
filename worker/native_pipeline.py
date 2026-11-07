@@ -53,6 +53,8 @@ class VideoPipelineContext:
     diar_segments: list[dict[str, Any]] = field(default_factory=list)
     detected_language: str | None = None
     language_probability: float | None = None
+    # Engine reported by the runner; a chunk that fell back to another engine replaces it.
+    transcription_engine: dict[str, Any] | None = None
     diarization_state: str = "skipped"
 
     @property
@@ -248,6 +250,8 @@ def _transcribe_chunks(ctx: VideoPipelineContext, deps: NativePipelineDependenci
 
     transcription_start = time.time()
     ctx.all_segments = []
+    ctx.transcription_engine = None
+    engine_fell_back = False
 
     for c in ctx.chunks:
         ct0 = time.time()
@@ -268,6 +272,18 @@ def _transcribe_chunks(ctx: VideoPipelineContext, deps: NativePipelineDependenci
                 "Language detected",
                 extra={"language": ctx.detected_language, "probability": ctx.language_probability},
             )
+
+        chunk_engine = lang_info.get("engine") if lang_info else None
+        if chunk_engine and ctx.transcription_engine is None:
+            ctx.transcription_engine = dict(chunk_engine)
+        elif chunk_engine and chunk_engine != ctx.transcription_engine and not engine_fell_back:
+            # A mixed transcript is recorded as the fallback engine so it is not mistaken for the primary.
+            deps.logger.warning(
+                "Chunk transcribed by a different engine; recording the fallback engine",
+                extra={"chunk_file": c.path.name, "engine": chunk_engine},
+            )
+            ctx.transcription_engine = dict(chunk_engine)
+            engine_fell_back = True
 
         for s in segs:
             s["start"] += c.offset
@@ -404,18 +420,27 @@ def _persist_transcript(ctx: VideoPipelineContext, deps: NativePipelineDependenc
         except Exception as e:
             deps.logger.warning("Failed to clear existing rows (continuing)", extra={"error": str(e)})
 
+        engine = ctx.transcription_engine or {}
         conn.execute(
             text("""
-            INSERT INTO transcripts (video_id, full_text, language, model, detected_language, language_probability)
-            VALUES (:v,:t,:lang,:m,:dlang,:lprob)
+            INSERT INTO transcripts (
+                video_id, full_text, language, model, detected_language, language_probability,
+                engine_model, engine_backend, engine_device, engine_compute_type, engine_version
+            )
+            VALUES (:v,:t,:lang,:m,:dlang,:lprob,:em,:eb,:ed,:ec,:ev)
         """),
             {
                 "v": ctx.video_id,
                 "t": full_text,
                 "lang": ctx.detected_language or "en",
-                "m": deps.settings.WHISPER_MODEL,
+                "m": engine.get("model") or deps.settings.WHISPER_MODEL,
                 "dlang": ctx.detected_language,
                 "lprob": ctx.language_probability,
+                "em": engine.get("model"),
+                "eb": engine.get("backend"),
+                "ed": engine.get("device"),
+                "ec": engine.get("compute_type"),
+                "ev": engine.get("version"),
             },
         )
 
