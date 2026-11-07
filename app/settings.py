@@ -155,6 +155,8 @@ class Settings(BaseSettings):
     CLIP_CACHE_TTL_SECONDS: int = Field(default=3600, ge=60, le=86400)
     ATPROTO_ENABLED: bool = False
     ATPROTO_HANDLE_RESOLVER: str = "https://bsky.social"
+    # Podcasting 2.0 JSON chapters and the recordings RSS feed (no enclosures).
+    PODCAST_FEED_ENABLED: bool = False
     SITE_DESCRIPTION: str = Field(
         default="A searchable archive of timestamped transcripts, with each passage linked to its source recording.",
         max_length=300,
