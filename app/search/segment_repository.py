@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import math
 from typing import Any
 from uuid import UUID
 
@@ -120,15 +122,10 @@ def _youtube_branches(q, video_id, filters, params):
     return text_where, title_where, (text_match, highlighted_text, text_rank, title_match)
 
 
-# Captions count only for videos without a native transcript. A per-row NOT
-# EXISTS made the planner walk every caption line of those videos instead of
-# the full-text index. Collecting the caption-only transcript ids once keeps
-# the full-text index in charge; IS TRUE stops the planner from also turning
-# the id list into a scan of the transcript-id index.
-_CAPTION_ONLY_TRANSCRIPT = """(ys.youtube_transcript_id = ANY(ARRAY(
-                    SELECT caption_only.id FROM youtube_transcripts caption_only
-                    WHERE NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = caption_only.video_id)
-                ))) IS TRUE"""
+# Captions count only for videos without a native transcript. The
+# ``overshadowed`` flag marks the rest, and the caption full-text indexes are
+# partial on ``NOT overshadowed`` so they never return lines search would drop.
+_CAPTION_ONLY_LINE = "NOT ys.overshadowed"
 
 
 def _best_branches(q, video_id, filters, params):
@@ -159,8 +156,8 @@ def _best_branches(q, video_id, filters, params):
             native_where.append("s.speaker_label IS NULL")
             native_title_where.append("s.speaker_label IS NULL")
 
-    youtube_where.append(_CAPTION_ONLY_TRANSCRIPT)
-    youtube_title_where.append("NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)")
+    youtube_where.append(_CAPTION_ONLY_LINE)
+    youtube_title_where.append("NOT yt.overshadowed")
     return (
         native_where,
         native_title_where,
@@ -169,6 +166,59 @@ def _best_branches(q, video_id, filters, params):
         (native_match, native_highlight, native_rank, title_match),
         (youtube_match, youtube_highlight, youtube_rank),
     )
+
+
+# Very common words such as "going" match hundreds of thousands of moments,
+# and ranking them all reads most of the transcript tables. When the planner
+# expects more matches than this in a branch, an unfiltered relevance search
+# ranks only the matches from the newest broadcasts: just enough videos to hold
+# about this many matches.
+COMMON_QUERY_MATCHES = 20_000
+
+_NEWEST_NATIVE_VIDEOS = """s.video_id = ANY(ARRAY(
+                    SELECT recent.id FROM videos recent
+                    WHERE EXISTS (SELECT 1 FROM segments recent_s WHERE recent_s.video_id = recent.id)
+                    ORDER BY recent.broadcast_date DESC NULLS LAST, recent.id DESC
+                    LIMIT :native_recent_videos
+                ))"""
+
+_NEWEST_CAPTION_TRANSCRIPTS = """ys.youtube_transcript_id = ANY(ARRAY(
+                    SELECT recent.id FROM youtube_transcripts recent
+                    JOIN videos recent_v ON recent_v.id = recent.video_id
+                    WHERE NOT recent.overshadowed
+                    ORDER BY recent_v.broadcast_date DESC NULLS LAST, recent_v.id DESC
+                    LIMIT :caption_recent_videos
+                ))"""
+
+
+def _estimated_matches(db, from_clause: str, where: list[str], params: dict[str, Any]) -> float:
+    """Return the planner's row estimate; planning alone takes about a millisecond."""
+    sql = f"EXPLAIN (FORMAT JSON) SELECT 1 FROM {from_clause} WHERE {' AND '.join(where)}"
+    plan = _execute_search(db, sql, params).scalar()
+    if isinstance(plan, str):
+        plan = json.loads(plan)
+    return float(plan[0]["Plan"]["Plan Rows"])
+
+
+def _cap_common_query(db, native_where, youtube_where, params) -> None:
+    """Limit each text branch to its newest videos when the query is very common."""
+    native_estimate = _estimated_matches(db, "segments s", native_where, params)
+    caption_estimate = _estimated_matches(db, "youtube_segments ys", youtube_where, params)
+    if max(native_estimate, caption_estimate) <= COMMON_QUERY_MATCHES:
+        return
+    native_videos, caption_videos = _execute_search(
+        db,
+        """SELECT
+                (SELECT count(*) FROM videos v WHERE EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id)),
+                (SELECT count(*) FROM youtube_transcripts yt WHERE NOT yt.overshadowed)""",
+        {},
+    ).one()
+    if native_estimate > COMMON_QUERY_MATCHES:
+        params["native_recent_videos"] = math.ceil(native_videos * COMMON_QUERY_MATCHES / native_estimate)
+        native_where.append(_NEWEST_NATIVE_VIDEOS)
+    if caption_estimate > COMMON_QUERY_MATCHES:
+        params["caption_recent_videos"] = math.ceil(caption_videos * COMMON_QUERY_MATCHES / caption_estimate)
+        youtube_where.append(_NEWEST_CAPTION_TRANSCRIPTS)
 
 
 _FIRST_NATIVE_SEGMENT = """
@@ -396,6 +446,8 @@ class SearchRepository:
             (native_match, native_highlight, native_rank, title_match),
             (youtube_match, youtube_highlight, youtube_rank),
         ) = _best_branches(q, video_id, filters, params)
+        if sort_by == "relevance" and not video_id and not _video_filter_clauses(filters, {}):
+            _cap_common_query(db, native_where, youtube_where, params)
 
         if sort_by == "date_desc":
             order_by = "broadcast_date DESC NULLS LAST, start_ms ASC"
