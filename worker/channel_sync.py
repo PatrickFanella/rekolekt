@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Protocol
 
 from sqlalchemy import text
 
 from app.archive.broadcast_dates import broadcast_columns
+from app.channel_sync_rules import SyncChannel, entry_published_date
+from app.channel_sync_rules import parse_channel_urls as parse_channel_urls
 from app.logging_config import get_logger
 from worker.youtube.service import get_youtube_service
 
@@ -28,6 +31,7 @@ class ChannelSyncResult:
     discovered: int = 0
     enqueued: int = 0
     failed_channels: int = 0
+    skipped: int = 0
 
 
 class ChannelSyncRepository(Protocol):
@@ -85,23 +89,20 @@ class SqlChannelSyncRepository:
         return row is not None
 
 
-def parse_channel_urls(raw_urls: str) -> tuple[str, ...]:
-    return tuple(url.strip() for url in raw_urls.split(",") if url.strip())
-
-
-def sync_configured_channels(conn: Any, channel_urls: Iterable[str]) -> ChannelSyncResult:
-    urls = tuple(channel_urls)
+def sync_configured_channels(conn: Any, channels: Iterable[SyncChannel]) -> ChannelSyncResult:
+    configured = tuple(channels)
     service = get_youtube_service()
     result = ChannelSyncService(
         repository=SqlChannelSyncRepository(conn),
         fetch_channel=lambda url: service.fetch_metadata(url, flat_playlist=True),
-    ).sync(urls)
+    ).sync(configured)
     logger.info(
         "Recurring channel sync complete",
         extra={
-            "channel_count": len(urls),
+            "channel_count": len(configured),
             "discovered": result.discovered,
             "enqueued": result.enqueued,
+            "skipped": result.skipped,
             "failed_channels": result.failed_channels,
         },
     )
@@ -109,7 +110,11 @@ def sync_configured_channels(conn: Any, channel_urls: Iterable[str]) -> ChannelS
 
 
 class ChannelSyncService:
-    """Discover channel uploads and enqueue each globally missing video once."""
+    """Discover channel uploads and enqueue each globally missing video once.
+
+    Each channel's inclusion rules run before ``enqueue_missing``, so a skipped
+    upload never creates a job. Videos already in the archive are not touched.
+    """
 
     def __init__(
         self,
@@ -120,11 +125,15 @@ class ChannelSyncService:
         self.repository = repository
         self.fetch_channel = fetch_channel
 
-    def sync(self, channel_urls: Iterable[str]) -> ChannelSyncResult:
+    def sync(self, channels: Iterable[SyncChannel | str]) -> ChannelSyncResult:
         discovered = 0
         enqueued = 0
         failed_channels = 0
-        for channel_url in channel_urls:
+        skipped_total = 0
+        for channel in channels:
+            if isinstance(channel, str):
+                channel = SyncChannel(url=channel)
+            channel_url = channel.url
             try:
                 metadata = self.fetch_channel(channel_url)
             except Exception as exc:
@@ -135,11 +144,20 @@ class ChannelSyncService:
                 )
                 continue
             channel_name = metadata.get("channel") or metadata.get("uploader") or metadata.get("title")
+            skipped: Counter[str] = Counter()
             for entry in metadata.get("entries") or ():
                 youtube_id = entry.get("id")
                 if not youtube_id:
                     continue
                 discovered += 1
+                reason = channel.rules.skip_reason(
+                    title=str(entry.get("title") or ""),
+                    duration_seconds=_duration_seconds(entry.get("duration")),
+                    published=entry_published_date(entry),
+                )
+                if reason is not None:
+                    skipped[reason] += 1
+                    continue
                 video = ChannelVideo(
                     youtube_id=str(youtube_id),
                     title=str(entry.get("title") or ""),
@@ -148,11 +166,24 @@ class ChannelSyncService:
                 )
                 if self.repository.enqueue_missing(video):
                     enqueued += 1
+            if skipped:
+                skipped_total += sum(skipped.values())
+                logger.info(
+                    "Recurring channel uploads skipped by rule",
+                    extra={"channel_url": channel_url, "skipped_by_rule": dict(sorted(skipped.items()))},
+                )
         return ChannelSyncResult(
             discovered=discovered,
             enqueued=enqueued,
             failed_channels=failed_channels,
+            skipped=skipped_total,
         )
+
+
+def _duration_seconds(value: object) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value)
 
 
 class ChannelSyncScheduler:

@@ -9,6 +9,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .branding import BrandProfile, load_brand_profile
+from .channel_sync_rules import load_sync_channels
 
 BASE_DIR = Path(__file__).resolve().parents[1]  # repo root (parent of 'app')
 
@@ -139,6 +140,12 @@ class Settings(BaseSettings):
     SITE_BRANDING: BrandProfile = Field(default_factory=BrandProfile, exclude=True)
 
     @model_validator(mode="after")
+    def validate_channel_sync_config(self):
+        # Fail startup on a bad rules file instead of at the first scheduled sync.
+        load_sync_channels(self.CHANNEL_SYNC_URLS, self.CHANNEL_SYNC_CONFIG)
+        return self
+
+    @model_validator(mode="after")
     def load_client_profile(self):
         profile = load_brand_profile(self.SITE_PROFILE_PATH) if self.SITE_PROFILE_PATH else self.SITE_BRANDING
         self.SITE_BRANDING = profile
@@ -230,6 +237,8 @@ class Settings(BaseSettings):
     JOB_CREATE_MAX_BATCH_EXPECTED_JOBS: int = 100  # Upper bound for staged batch coordination fan-out
     JOB_CREATE_ADMIN_BYPASS_QUOTAS: bool = True  # Admins may create ingestion jobs without quota limits
     CHANNEL_SYNC_URLS: str = ""  # Comma-separated YouTube channel /videos URLs for recurring discovery
+    # Optional JSON file of channels with inclusion rules; see docs/product/channel-sync-rules.md
+    CHANNEL_SYNC_CONFIG: str = ""
     CHANNEL_SYNC_INTERVAL_SECONDS: int = Field(default=6 * 60 * 60, ge=60, le=24 * 60 * 60)
 
     # Backup and disaster recovery configuration
