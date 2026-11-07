@@ -1109,13 +1109,34 @@ class EnhancedSegment(Segment):
     temperature: Optional[float] = Field(None, description="Sampling temperature used")
 
 
-class TranscriptMetadata(BaseModel):
-    """Metadata about a transcript."""
+class TranscriptEngine(BaseModel):
+    """The transcription engine that actually produced a native transcript."""
 
+    model: Optional[str] = Field(None, description="Model that ran, after any fallback")
+    backend: Optional[str] = Field(None, description="Engine backend: faster-whisper or whisper")
+    device: Optional[str] = Field(None, description="Device the model ran on, for example cuda or cpu")
+    compute_type: Optional[str] = Field(None, description="Compute type, for example float16 or int8")
+    version: Optional[str] = Field(None, description="Installed version of the backend library")
+
+
+class TranscriptMetadata(BaseModel):
+    """Metadata about a video's native (Whisper) transcript."""
+
+    video_id: uuid.UUID = Field(..., description="Video the transcript belongs to")
     detected_language: Optional[str] = Field(None, description="Detected language code")
     language_probability: Optional[float] = Field(None, description="Language detection confidence")
-    model: str = Field(..., description="Whisper model used")
-    quality_preset: Optional[str] = Field(None, description="Quality preset used")
+    model: Optional[str] = Field(
+        None,
+        description=(
+            "Model stored on the transcript. When provenance is unknown this is the configured model, "
+            "which may not be the one that ran."
+        ),
+    )
+    provenance: Literal["recorded", "unknown"] = Field(
+        ..., description="recorded when the engine was stored at transcription time; unknown for older transcripts"
+    )
+    engine: Optional[TranscriptEngine] = Field(None, description="Engine that produced the transcript; null if unknown")
+    created_at: datetime = Field(..., description="When the transcript was stored")
 
 
 # Transcript cleanup schemas

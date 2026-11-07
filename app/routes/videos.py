@@ -23,6 +23,8 @@ from ..schemas import (
     RelatedEpisodesResponse,
     Segment,
     TranscriptBlockResponse,
+    TranscriptEngine,
+    TranscriptMetadata,
     TranscriptResponse,
     VideoChapterResponse,
     VideoChaptersResponse,
@@ -346,6 +348,47 @@ def get_transcript(
             source="whisper",
             source_label="Whisper transcript",
         )
+
+
+@router.get(
+    "/videos/{video_id}/transcript/metadata",
+    response_model=TranscriptMetadata,
+    summary="Get native transcript metadata",
+    description="""
+    Return the language and the transcription engine (model, backend, device, compute type and
+    library version) that produced the video's native Whisper transcript. Transcripts stored
+    before engine provenance was recorded report `provenance: unknown` and a null `engine`.
+    """,
+    responses={
+        200: {"description": "Transcript metadata retrieved successfully"},
+        404: {"description": "Video not found", "model": ErrorResponse},
+        409: {"description": "The video has no native transcript yet", "model": ErrorResponse},
+    },
+)
+def get_transcript_metadata(video_id: uuid.UUID, db=Depends(get_db)):
+    video = crud.get_video(db, video_id)
+    if not video:
+        raise VideoNotFoundError(str(video_id))
+    row = crud.get_transcript_metadata(db, video_id)
+    if not row:
+        raise TranscriptNotReadyError(str(video_id), str(dict(video).get("state") or "unknown"))
+    engine_fields = {
+        "model": row["engine_model"],
+        "backend": row["engine_backend"],
+        "device": row["engine_device"],
+        "compute_type": row["engine_compute_type"],
+        "version": row["engine_version"],
+    }
+    recorded = any(value is not None for value in engine_fields.values())
+    return TranscriptMetadata(
+        video_id=video_id,
+        detected_language=row["detected_language"],
+        language_probability=row["language_probability"],
+        model=row["model"],
+        provenance="recorded" if recorded else "unknown",
+        engine=TranscriptEngine(**engine_fields) if recorded else None,
+        created_at=row["created_at"],
+    )
 
 
 @router.get(

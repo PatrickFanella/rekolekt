@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     CLEANUP_DELETE_DIR_IF_EMPTY: bool = True
     # If a video stays in a non-terminal state for too long, requeue it
     RESCUE_STUCK_AFTER_SECONDS: int = 900
+    # Model upgrade requeue: redo completed native transcripts not produced by this engine.
+    # An empty target model disables it; backend and version are only compared when set.
+    MODEL_UPGRADE_TARGET_MODEL: str = ""
+    MODEL_UPGRADE_TARGET_BACKEND: str = ""
+    MODEL_UPGRADE_TARGET_VERSION: str = ""
+    MODEL_UPGRADE_BATCH_SIZE: int = 5
 
     # JavaScript runtime configuration for yt-dlp
     # yt-dlp requires a JS runtime (Deno/Node/Bun/QuickJS) to solve YouTube challenges

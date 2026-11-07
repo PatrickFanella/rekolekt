@@ -7119,6 +7119,153 @@
         "title": "TranscriptBlockResponse",
         "type": "object"
       },
+      "TranscriptEngine": {
+        "description": "The transcription engine that actually produced a native transcript.",
+        "properties": {
+          "backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Engine backend: faster-whisper or whisper",
+            "title": "Backend"
+          },
+          "compute_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Compute type, for example float16 or int8",
+            "title": "Compute Type"
+          },
+          "device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Device the model ran on, for example cuda or cpu",
+            "title": "Device"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model that ran, after any fallback",
+            "title": "Model"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Installed version of the backend library",
+            "title": "Version"
+          }
+        },
+        "title": "TranscriptEngine",
+        "type": "object"
+      },
+      "TranscriptMetadata": {
+        "description": "Metadata about a video's native (Whisper) transcript.",
+        "properties": {
+          "created_at": {
+            "description": "When the transcript was stored",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detected_language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Detected language code",
+            "title": "Detected Language"
+          },
+          "engine": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TranscriptEngine"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Engine that produced the transcript; null if unknown"
+          },
+          "language_probability": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Language detection confidence",
+            "title": "Language Probability"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Model stored on the transcript. When provenance is unknown this is the configured model, which may not be the one that ran.",
+            "title": "Model"
+          },
+          "provenance": {
+            "description": "recorded when the engine was stored at transcription time; unknown for older transcripts",
+            "enum": [
+              "recorded",
+              "unknown"
+            ],
+            "title": "Provenance",
+            "type": "string"
+          },
+          "video_id": {
+            "description": "Video the transcript belongs to",
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "provenance",
+          "created_at"
+        ],
+        "title": "TranscriptMetadata",
+        "type": "object"
+      },
       "TranscriptResponse": {
         "description": "Complete transcript for a video with all segments.",
         "example": {
@@ -15769,6 +15916,70 @@
         "summary": "Export Whisper transcript as VTT",
         "tags": [
           "Exports"
+        ]
+      }
+    },
+    "/videos/{video_id}/transcript/metadata": {
+      "get": {
+        "description": "Return the language and the transcription engine (model, backend, device, compute type and\n    library version) that produced the video's native Whisper transcript. Transcripts stored\n    before engine provenance was recorded report `provenance: unknown` and a null `engine`.",
+        "operationId": "get_transcript_metadata_videos__video_id__transcript_metadata_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranscriptMetadata"
+                }
+              }
+            },
+            "description": "Transcript metadata retrieved successfully"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Video not found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The video has no native transcript yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get native transcript metadata",
+        "tags": [
+          "Videos"
         ]
       }
     },

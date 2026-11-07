@@ -16,7 +16,7 @@ from app.ytdlp_validation import validate_js_runtime_or_exit
 from worker.caption_ingest import ingest_available_captions
 from worker.channel_sync import ChannelSyncScheduler, parse_channel_urls, sync_configured_channels
 from worker.job_lifecycle import claim_job_attempt, finish_job_attempt, maintain_job_lease
-from worker.maintenance import requeue_for_model_upgrade, rescue_stuck_videos
+from worker.maintenance import model_upgrade_policy, requeue_for_model_upgrade, rescue_stuck_videos
 from worker.metrics import setup_worker_info, try_collect_gpu_metrics
 from worker.pipeline import expand_channel_if_needed
 from worker.queue import pending_video_claim_sql
@@ -29,6 +29,7 @@ from worker.state_model import (
     sql_string_list,
 )
 from worker.video_pipeline import ProcessVideoCommand, default_video_processing_pipeline
+from worker.whisper_runner import loaded_engine
 
 engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
 POLL_INTERVAL = 3
@@ -346,19 +347,28 @@ def run():
             except Exception as e:
                 logger.warning("Rescue check failed", extra={"error": str(e)})
 
-            # Model upgrade requeue: reprocess completed videos if current model is larger/better
+            # Model upgrade requeue: redo completed transcripts that did not come from the target engine.
+            # It waits until this worker has loaded that engine, so a worker that fell back to another
+            # model does not requeue work it would redo with the same fallback.
             try:
-                current_model = settings.WHISPER_MODEL
-                requeued = requeue_for_model_upgrade(conn, current_model=current_model)
-                if requeued:
-                    logger.info(
-                        "Model upgrade requeue",
-                        extra={
-                            "count": len(requeued),
-                            "from_models": ", ".join(set(r[1] for r in requeued)),
-                            "to_model": current_model,
-                        },
+                policy = model_upgrade_policy(settings)
+                loaded = loaded_engine() if policy else None
+                if policy and loaded and policy.matches(loaded):
+                    requeued = requeue_for_model_upgrade(
+                        conn,
+                        policy=policy,
+                        produced_before=loaded["loaded_at"],
+                        limit=settings.MODEL_UPGRADE_BATCH_SIZE,
                     )
+                    if requeued:
+                        logger.info(
+                            "Model upgrade requeue",
+                            extra={
+                                "count": len(requeued),
+                                "from_models": ", ".join(sorted({str(r[1]) for r in requeued})),
+                                "to_model": policy.target_model,
+                            },
+                        )
             except Exception as e:
                 logger.warning("Model upgrade requeue failed", extra={"error": str(e)})
 

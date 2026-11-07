@@ -972,6 +972,25 @@ def list_completed_videos(db, limit: int = 12, offset: int = 0):
 
 
 @_retry_on_transient_error
+def get_transcript_metadata(db, video_id):
+    return (
+        db.execute(
+            text("""
+                SELECT model, detected_language, language_probability, created_at,
+                       engine_model, engine_backend, engine_device, engine_compute_type, engine_version
+                FROM transcripts
+                WHERE video_id = :v
+                ORDER BY created_at DESC, id
+                LIMIT 1
+                """),
+            {"v": str(video_id)},
+        )
+        .mappings()
+        .first()
+    )
+
+
+@_retry_on_transient_error
 def get_youtube_transcript(db, video_id):
     return (
         db.execute(
