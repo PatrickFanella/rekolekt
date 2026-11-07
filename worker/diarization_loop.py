@@ -1,3 +1,4 @@
+import shutil
 import time
 from pathlib import Path
 from threading import Event, Thread
@@ -7,7 +8,7 @@ from sqlalchemy import create_engine, text
 from app.cache import invalidate_video_data
 from app.logging_config import configure_logging, get_logger
 from app.settings import settings
-from worker.diarize import run_diarization
+from worker.diarize import RecordingDiarization, diarize_recording
 
 configure_logging(
     service="diarization-worker",
@@ -17,6 +18,10 @@ configure_logging(
 logger = get_logger(__name__)
 
 _HEARTBEAT_INTERVAL_SECONDS = 60
+_MISSING_WAV_ERROR = "WAV file missing for diarization"
+
+# Backlog mode pins the batch it selected at startup as this process's allow-list.
+_backlog_video_ids: list | None = None
 
 
 def _canary_token() -> str | None:
@@ -40,6 +45,8 @@ def _ownership_params() -> dict:
 
 
 def _allowed_video_ids():
+    if _backlog_video_ids is not None:
+        return list(_backlog_video_ids)
     return list(settings.DIARIZATION_ALLOWED_VIDEO_IDS)
 
 
@@ -48,7 +55,13 @@ def _allowlist_params() -> dict:
 
 
 def _require_valid_allowlist() -> None:
-    allowed = _allowed_video_ids()
+    if settings.DIARIZATION_BACKLOG_MODE:
+        if settings.DIARIZATION_CANARY_MODE:
+            raise ValueError("backlog diarization cannot run in canary mode")
+        if settings.DIARIZATION_ALLOWED_VIDEO_IDS:
+            raise ValueError("backlog diarization selects its own batch; leave DIARIZATION_ALLOWED_VIDEO_IDS empty")
+        return
+    allowed = list(settings.DIARIZATION_ALLOWED_VIDEO_IDS)
     if len(allowed) > 5:
         raise ValueError("DIARIZATION_ALLOWED_VIDEO_IDS may contain at most 5 UUIDs")
     if not allowed:
@@ -94,7 +107,7 @@ def _claim_video(conn):
         return (
             conn.execute(
                 text("""
-                    SELECT v.id, v.wav_path FROM videos v
+                    SELECT v.id, v.wav_path, v.youtube_id FROM videos v
                     WHERE v.id = ANY(:allowed_video_ids)
                       AND v.state = 'completed'
                       AND v.diarization_state='running'
@@ -112,10 +125,10 @@ def _claim_video(conn):
     row = (
         conn.execute(
             text("""
-            SELECT v.id, v.wav_path
+            SELECT v.id, v.wav_path, v.youtube_id
             FROM videos v
             WHERE v.state = 'completed'
-              AND v.wav_path IS NOT NULL
+              AND (v.wav_path IS NOT NULL OR :refetch_audio)
               AND v.diarization_state = 'pending'
               AND v.duration_seconds IS NOT NULL
               AND v.duration_seconds <= :max_duration_seconds
@@ -126,7 +139,11 @@ def _claim_video(conn):
             FOR UPDATE SKIP LOCKED
             LIMIT 1
             """),
-            {"max_duration_seconds": settings.DIARIZATION_MAX_DURATION_SECONDS, **_allowlist_params()},
+            {
+                "max_duration_seconds": settings.DIARIZATION_MAX_DURATION_SECONDS,
+                "refetch_audio": settings.DIARIZATION_REFETCH_AUDIO,
+                **_allowlist_params(),
+            },
         )
         .mappings()
         .first()
@@ -221,7 +238,7 @@ def _skip_unsafe_diarization_jobs(conn):
                     ' exceeds DIARIZATION_MAX_DURATION_SECONDS=' || CAST(:max_duration_seconds AS text),
                 updated_at = now()
             WHERE v.state = 'completed'
-              AND v.wav_path IS NOT NULL
+              AND (v.wav_path IS NOT NULL OR :refetch_audio)
               AND EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id)
               AND (
                   v.diarization_state = 'pending'
@@ -241,6 +258,7 @@ def _skip_unsafe_diarization_jobs(conn):
         {
             "max_duration_seconds": settings.DIARIZATION_MAX_DURATION_SECONDS,
             "timeout_minutes": settings.DIARIZATION_RUNNING_TIMEOUT_MINUTES,
+            "refetch_audio": settings.DIARIZATION_REFETCH_AUDIO,
             **_allowlist_params(),
         },
     ).fetchall()
@@ -249,6 +267,101 @@ def _skip_unsafe_diarization_jobs(conn):
             "Skipped diarization jobs exceeding duration limit",
             extra={"count": len(rows), "max_duration_seconds": settings.DIARIZATION_MAX_DURATION_SECONDS},
         )
+
+
+def _refetch_audio(row, scratch: Path) -> Path:
+    """Download and transcode a video's audio again into its scratch directory."""
+    from worker.audio import download_audio, ensure_wav_16k
+
+    if not row.get("youtube_id"):
+        raise FileNotFoundError(f"{_MISSING_WAV_ERROR}: no source to re-fetch")
+    shutil.rmtree(scratch, ignore_errors=True)
+    scratch.mkdir(parents=True)
+    logger.info("Re-fetching audio for diarization", extra={"video_id": str(row["id"])})
+    raw_path = download_audio(f"https://www.youtube.com/watch?v={row['youtube_id']}", scratch)
+    wav_path = ensure_wav_16k(raw_path)
+    if raw_path != wav_path:
+        raw_path.unlink(missing_ok=True)
+    return wav_path
+
+
+def _select_backlog_batch(engine) -> list:
+    """Pick at most DIARIZATION_BACKLOG_BATCH_SIZE eligible videos for this run.
+
+    With audio re-fetch enabled, rows that failed only because their WAV was
+    deleted are returned to pending; every other failed row stays failed.
+    """
+    with engine.begin() as conn:
+        ids = list(
+            conn.execute(
+                text("""
+                    SELECT v.id FROM videos v
+                    WHERE v.state = 'completed'
+                      AND v.duration_seconds IS NOT NULL
+                      AND v.duration_seconds <= :max_duration_seconds
+                      AND (v.wav_path IS NOT NULL OR :refetch_audio)
+                      AND (v.diarization_error IS NULL OR v.diarization_error NOT LIKE 'canary-%')
+                      AND (
+                          v.diarization_state = 'pending'
+                          OR (:refetch_audio AND v.diarization_state = 'failed'
+                              AND v.diarization_error LIKE :missing_wav_prefix)
+                      )
+                      AND EXISTS (SELECT 1 FROM segments s WHERE s.video_id = v.id)
+                    ORDER BY v.created_at, v.id
+                    LIMIT :batch_size
+                """),
+                {
+                    "max_duration_seconds": settings.DIARIZATION_MAX_DURATION_SECONDS,
+                    "refetch_audio": settings.DIARIZATION_REFETCH_AUDIO,
+                    "missing_wav_prefix": f"{_MISSING_WAV_ERROR}%",
+                    "batch_size": settings.DIARIZATION_BACKLOG_BATCH_SIZE,
+                },
+            ).scalars()
+        )
+        if ids and settings.DIARIZATION_REFETCH_AUDIO:
+            conn.execute(
+                text("""
+                    UPDATE videos SET diarization_state = 'pending', diarization_error = NULL, updated_at = now()
+                    WHERE id = ANY(:ids) AND diarization_state = 'failed' AND diarization_error LIKE :missing_wav_prefix
+                """),
+                {"ids": ids, "missing_wav_prefix": f"{_MISSING_WAV_ERROR}%"},
+            )
+    return ids
+
+
+def _speaker_at(tracks: list[tuple[float, float, str]], moment: float) -> str | None:
+    for start, end, label in tracks:
+        if start > moment:
+            return None
+        if start <= moment <= end:
+            return label
+    return None
+
+
+def _write_speaker_centroids(conn, video_id, result: RecordingDiarization) -> None:
+    """Replace the recording's stored speaker embeddings while it is still owned."""
+    conn.execute(text("DELETE FROM video_speaker_centroids WHERE video_id = :v"), {"v": video_id})
+    for label, vector in result.centroids.items():
+        inserted = conn.execute(
+            text("""
+                INSERT INTO video_speaker_centroids (video_id, speaker_label, embedding, speech_seconds, model)
+                SELECT :v, :label, :embedding, :seconds, :model
+                WHERE EXISTS (
+                    SELECT 1 FROM videos v
+                    WHERE v.id=:v AND v.state='completed' AND v.diarization_state='running'
+                      AND v.id = ANY(:allowed_video_ids) AND """ + _ownership_sql("v") + ")"),
+            {
+                "v": video_id,
+                "label": label,
+                "embedding": vector,
+                "seconds": result.speech_seconds.get(label, 0.0),
+                "model": settings.DIARIZATION_MODEL,
+                **_allowlist_params(),
+                **_ownership_params(),
+            },
+        )
+        if inserted.rowcount != 1:
+            raise RuntimeError("diarization centroid write lost ownership of the target video")
 
 
 def process_one(engine) -> bool:
@@ -261,13 +374,17 @@ def process_one(engine) -> bool:
         return False
 
     video_id = row["id"]
-    wav_path = Path(row["wav_path"])
+    wav_path = Path(row["wav_path"]) if row["wav_path"] else None
     logger.info("Starting diarization job", extra={"video_id": str(video_id), "wav_path": str(wav_path)})
     heartbeat_stop, heartbeat_thread = _start_diarization_heartbeat(engine, video_id)
+    scratch: Path | None = None
 
     try:
-        if not wav_path.exists():
-            raise FileNotFoundError(f"WAV file missing for diarization: {wav_path}")
+        if wav_path is None or not wav_path.exists():
+            if not settings.DIARIZATION_REFETCH_AUDIO:
+                raise FileNotFoundError(f"{_MISSING_WAV_ERROR}: {wav_path}")
+            scratch = Path(settings.DIARIZATION_REFETCH_DIR) / str(video_id)
+            wav_path = _refetch_audio(row, scratch)
         with engine.begin() as conn:
             segments = _load_segments(conn, video_id)
         logger.info(
@@ -294,10 +411,14 @@ def process_one(engine) -> bool:
             "Calling pyannote diarization",
             extra={"video_id": str(video_id), "device": settings.DIARIZATION_DEVICE},
         )
-        diar_list, friendly = run_diarization(wav_path)
+        diarization = diarize_recording(wav_path)
         logger.info(
             "pyannote diarization returned",
-            extra={"video_id": str(video_id), "speaker_regions": len(diar_list), "speakers": len(friendly)},
+            extra={
+                "video_id": str(video_id),
+                "speaker_regions": len(diarization.tracks),
+                "speakers": len(diarization.speech_seconds),
+            },
         )
         with engine.begin() as conn:
             # Keep label writeback and the final durable token transition atomic.
@@ -317,12 +438,7 @@ def process_one(engine) -> bool:
                 raise RuntimeError("diarization canary fencing token no longer owns target")
             assigned = 0
             for seg in segments:
-                mid = (seg["start"] + seg["end"]) / 2.0
-                speaker = None
-                for start, end, raw_label in diar_list:
-                    if start <= mid <= end:
-                        speaker = friendly.get(raw_label, raw_label)
-                        break
+                speaker = _speaker_at(diarization.tracks, (seg["start"] + seg["end"]) / 2.0)
                 if speaker:
                     assigned += 1
                 result = conn.execute(
@@ -348,6 +464,7 @@ def process_one(engine) -> bool:
                     raise RuntimeError("diarization segment update did not affect exactly one target segment")
             if assigned == 0:
                 raise RuntimeError("Diarization completed without assigning any speaker labels")
+            _write_speaker_centroids(conn, video_id, diarization)
             completed = conn.execute(
                 text("""
                     UPDATE videos
@@ -393,13 +510,21 @@ def process_one(engine) -> bool:
         return True
     finally:
         _stop_diarization_heartbeat(heartbeat_stop, heartbeat_thread)
+        if scratch is not None:
+            shutil.rmtree(scratch, ignore_errors=True)
 
 
 def run():
+    global _backlog_video_ids
     _require_valid_allowlist()
     if not settings.ENABLE_DIARIZATION:
         logger.warning("ENABLE_DIARIZATION is false; diarization worker will idle")
     engine = create_engine(settings.DATABASE_URL, future=True, pool_pre_ping=True, hide_parameters=True)
+    if settings.DIARIZATION_BACKLOG_MODE:
+        _backlog_video_ids = _select_backlog_batch(engine)
+        logger.info("Selected diarization backlog batch", extra={"videos": len(_backlog_video_ids)})
+        if not _backlog_video_ids:
+            return
     logger.info(
         "Diarization worker started",
         extra={"device": settings.DIARIZATION_DEVICE, "inline": settings.DIARIZATION_INLINE},
@@ -426,7 +551,7 @@ def run():
                 )
                 return
         if not did_work:
-            if settings.DIARIZATION_EXIT_WHEN_IDLE:
+            if settings.DIARIZATION_EXIT_WHEN_IDLE or settings.DIARIZATION_BACKLOG_MODE:
                 logger.info("Diarization worker is idle; exiting by configuration")
                 return
             time.sleep(settings.DIARIZATION_POLL_INTERVAL)

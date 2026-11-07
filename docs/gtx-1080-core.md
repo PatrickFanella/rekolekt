@@ -153,13 +153,18 @@ labels and resets only the exact failed/leased target to pending.
 
 The pre-existing `hasanara_diarization` login is checked before every canary;
 the helper never creates or modifies it. It must have only `CONNECT`, public
-schema `USAGE`, `SELECT` on `videos.id`, `state`, `wav_path`,
+schema `USAGE`, `SELECT` on `videos.id`, `state`, `wav_path`, `youtube_id`,
 `diarization_state`, `diarization_error`, `duration_seconds`, `updated_at`, and `created_at`, and
 `UPDATE` on `videos.diarization_state`, `diarization_error`, and `updated_at`.
 It must have `SELECT` on `segments.id`, `video_id`, `start_ms`, `end_ms`,
 `text`, `speaker_label`, `confidence`, `avg_logprob`, `temperature`, and
-`token_count`, plus `UPDATE` on `segments.speaker_label`; no other object,
+`token_count`, plus `UPDATE` on `segments.speaker_label`; `SELECT (video_id)`,
+`INSERT (video_id, speaker_label, embedding, speech_seconds, model)` and
+`DELETE` on `video_speaker_centroids`; no other object,
 sequence, schema-create, ownership, membership, or elevated role privileges.
+
+For long recordings, missing audio and bounded backlog batches, see
+[speaker diarization coverage](product/speaker-diarization.md).
 
 ## Tuning
 

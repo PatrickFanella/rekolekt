@@ -165,6 +165,22 @@ run_diarization_canary() {
     trap - EXIT INT TERM
 }
 
+# A bounded backlog batch: the worker selects at most batch-size eligible
+# videos (re-fetching deleted audio, diarizing long ones in 600-second windows),
+# processes them once, and exits. Canary rows are never selected.
+run_diarization_backlog() {
+    local batch_size=$1
+    [[ $batch_size =~ ^([1-9]|1[0-9]|20)$ ]] || return 64
+    run_preflight
+    check_diarization_role
+    compose --profile diarization run --rm --no-deps \
+      -e DIARIZATION_BACKLOG_MODE=true -e "DIARIZATION_BACKLOG_BATCH_SIZE=$batch_size" \
+      -e "DIARIZATION_MAX_JOBS_PER_PROCESS=$batch_size" -e DIARIZATION_ALLOWED_VIDEO_IDS= \
+      -e DIARIZATION_CANARY_MODE=false -e DIARIZATION_EXIT_WHEN_IDLE=true \
+      -e DIARIZATION_MAX_DURATION_SECONDS=43200 -e DIARIZATION_CHUNK_SECONDS=600 -e DIARIZATION_REFETCH_AUDIO=true \
+      -e DIARIZATION_DEVICE=cpu -e HF_HUB_OFFLINE=1 -e TRANSFORMERS_OFFLINE=1 -e DIARIZATION_STRICT=true diarization-worker
+}
+
 assert_exact_token_container_absent() {
     local token_ids name_ids
     token_ids=$(timeout --kill-after=5s 10s "${CLEAN_ENV[@]}" docker container ls --all --no-trunc --filter "label=hasanara.canary-token=$canary_token" --format '{{.ID}}') || return 1
@@ -537,6 +553,10 @@ case "$command" in
         if [[ ${1:-} == diarization-canary ]]; then
             if (($# != 3)) || ! is_uuid "${2:-}" || [[ ${3:-} != --approved ]]; then printf '%s\n' 'diarization-canary requires exactly one UUID and --approved' >&2; exit 64; fi
             run_diarization_canary "$2"; exit $?
+        fi
+        if [[ ${1:-} == diarization-backlog ]]; then
+            if (($# != 3)) || ! [[ ${2:-} =~ ^([1-9]|1[0-9]|20)$ ]] || [[ ${3:-} != --approved ]]; then printf '%s\n' 'diarization-backlog requires a batch size 1..20 and --approved' >&2; exit 64; fi
+            run_diarization_backlog "$2"; exit $?
         fi
         if [[ ${1:-} == diarization-canary-recover ]]; then
             if (($# != 4)) || ! is_uuid "${2:-}" || ! is_uuid "${3:-}" || [[ ${4:-} != --approved ]]; then printf '%s\n' 'diarization-canary-recover requires video UUID, invocation UUID, and --approved' >&2; exit 64; fi

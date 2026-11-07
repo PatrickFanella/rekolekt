@@ -12,20 +12,23 @@ WITH role_row AS (
     VALUES
         ('videos', 'id', 'SELECT'), ('videos', 'state', 'SELECT'), ('videos', 'wav_path', 'SELECT'),
         ('videos', 'diarization_state', 'SELECT'), ('videos', 'diarization_error', 'SELECT'), ('videos', 'duration_seconds', 'SELECT'),
-        ('videos', 'updated_at', 'SELECT'), ('videos', 'created_at', 'SELECT'),
+        ('videos', 'updated_at', 'SELECT'), ('videos', 'created_at', 'SELECT'), ('videos', 'youtube_id', 'SELECT'),
         ('videos', 'diarization_state', 'UPDATE'), ('videos', 'diarization_error', 'UPDATE'),
         ('videos', 'updated_at', 'UPDATE'), ('segments', 'id', 'SELECT'),
         ('segments', 'video_id', 'SELECT'), ('segments', 'start_ms', 'SELECT'),
         ('segments', 'end_ms', 'SELECT'), ('segments', 'text', 'SELECT'),
         ('segments', 'speaker_label', 'SELECT'), ('segments', 'confidence', 'SELECT'),
         ('segments', 'avg_logprob', 'SELECT'), ('segments', 'temperature', 'SELECT'),
-        ('segments', 'token_count', 'SELECT'), ('segments', 'speaker_label', 'UPDATE')
+        ('segments', 'token_count', 'SELECT'), ('segments', 'speaker_label', 'UPDATE'),
+        ('video_speaker_centroids', 'video_id', 'SELECT'), ('video_speaker_centroids', 'video_id', 'INSERT'),
+        ('video_speaker_centroids', 'speaker_label', 'INSERT'), ('video_speaker_centroids', 'embedding', 'INSERT'),
+        ('video_speaker_centroids', 'speech_seconds', 'INSERT'), ('video_speaker_centroids', 'model', 'INSERT')
 ), effective_target_grants AS (
     SELECT c.table_name, c.column_name, p.privilege_type
     FROM information_schema.columns c
     CROSS JOIN (VALUES ('SELECT'), ('INSERT'), ('UPDATE'), ('REFERENCES')) p(privilege_type)
     WHERE c.table_schema = 'public'
-      AND c.table_name IN ('videos', 'segments')
+      AND c.table_name IN ('videos', 'segments', 'video_speaker_centroids')
       AND has_column_privilege('hasanara_diarization', format('%I.%I', c.table_schema, c.table_name), c.column_name, p.privilege_type)
 ), non_system_routines AS (
     SELECT p.oid, p.proowner
@@ -74,18 +77,20 @@ SELECT 1 / CASE WHEN
         SELECT 1
         FROM non_system_relations c
         WHERE c.nspname = 'public'
-          AND c.relname IN ('videos', 'segments')
+          AND c.relname IN ('videos', 'segments', 'video_speaker_centroids')
           AND c.relkind <> 'S'
           AND (
-              has_table_privilege('hasanara_diarization', c.oid, 'DELETE')
+              (c.relname <> 'video_speaker_centroids' AND has_table_privilege('hasanara_diarization', c.oid, 'DELETE'))
               OR has_table_privilege('hasanara_diarization', c.oid, 'TRUNCATE')
               OR has_table_privilege('hasanara_diarization', c.oid, 'TRIGGER')
           )
     )
+    -- Rediarization replaces a recording's centroids, so DELETE is required there.
+    AND has_table_privilege('hasanara_diarization', 'public.video_speaker_centroids', 'DELETE')
     AND NOT EXISTS (
         SELECT 1
         FROM non_system_relations c
-        WHERE NOT (c.nspname = 'public' AND c.relname IN ('videos', 'segments'))
+        WHERE NOT (c.nspname = 'public' AND c.relname IN ('videos', 'segments', 'video_speaker_centroids'))
           AND (
               (c.relkind = 'S' AND (
                   has_sequence_privilege('hasanara_diarization', c.oid, 'USAGE')

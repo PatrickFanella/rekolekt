@@ -286,7 +286,7 @@ def test_normal_mode_failure_completion_sql_uses_no_canary_bind(monkeypatch):
             "_load_segments",
             return_value=[{"_segment_id": "segment", "start": 0, "end": 1}],
         ),
-        patch.object(diarization_loop, "run_diarization", side_effect=RuntimeError("boom")),
+        patch.object(diarization_loop, "diarize_recording", side_effect=RuntimeError("boom")),
     ):
         assert diarization_loop.process_one(engine) is True
 

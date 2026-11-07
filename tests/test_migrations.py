@@ -950,6 +950,74 @@ def test_diarization_role_speaker_updates_do_not_enqueue_search_outbox(alembic_c
                 conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
 
 
+def test_diarization_role_grants_replace_speaker_centroids_only(alembic_config, clean_db, test_db_url):
+    """The documented least-privilege grants let the worker replace centroids and nothing more."""
+    command.upgrade(alembic_config, "head")
+    role = "hasanara_diarization_centroid_test"
+    with get_engine(test_db_url) as engine:
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text(
+                        f"DO $$ BEGIN IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') THEN EXECUTE 'DROP OWNED BY {role}'; EXECUTE 'DROP ROLE {role}'; END IF; END $$"
+                    )
+                )
+                conn.execute(text(f"CREATE ROLE {role} LOGIN PASSWORD 'diarization-test-password'"))
+                conn.execute(text(f"GRANT CONNECT ON DATABASE hasanara_migration_test TO {role}"))
+                conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {role}"))
+                conn.execute(text(f"GRANT SELECT (video_id) ON video_speaker_centroids TO {role}"))
+                conn.execute(
+                    text(
+                        f"GRANT INSERT (video_id, speaker_label, embedding, speech_seconds, model) ON video_speaker_centroids TO {role}"
+                    )
+                )
+                conn.execute(text(f"GRANT DELETE ON video_speaker_centroids TO {role}"))
+                job_id = "00000000-0000-0000-0000-000000000311"
+                video_id = "00000000-0000-0000-0000-000000000312"
+                conn.execute(
+                    text("INSERT INTO jobs(id, kind, input_url) VALUES (:id, 'single', 'https://example.test/job')"),
+                    {"id": job_id},
+                )
+                conn.execute(
+                    text("INSERT INTO videos(id, job_id, youtube_id) VALUES (:id, :job, 'centroid-role-video')"),
+                    {"id": video_id, "job": job_id},
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO video_speaker_centroids(video_id, speaker_label, embedding, model) VALUES (:v, 'Speaker 9', ARRAY[1.0]::real[], 'old')"
+                    ),
+                    {"v": video_id},
+                )
+
+            diarization_url = make_url(test_db_url).set(username=role, password="diarization-test-password")
+            with get_engine(diarization_url.render_as_string(hide_password=False)) as diarization_engine:
+                with diarization_engine.begin() as conn:
+                    conn.execute(text("DELETE FROM video_speaker_centroids WHERE video_id = :v"), {"v": video_id})
+                    conn.execute(
+                        text(
+                            "INSERT INTO video_speaker_centroids(video_id, speaker_label, embedding, speech_seconds, model) VALUES (:v, 'Speaker 1', :e, 2.5, 'new')"
+                        ),
+                        {"v": video_id, "e": [0.6, 0.8]},
+                    )
+                with pytest.raises(sa.exc.ProgrammingError):
+                    with diarization_engine.begin() as conn:
+                        conn.execute(text("UPDATE video_speaker_centroids SET model = 'denied'"))
+                with pytest.raises(sa.exc.ProgrammingError):
+                    with diarization_engine.begin() as conn:
+                        conn.execute(text("SELECT embedding FROM video_speaker_centroids"))
+
+            with engine.begin() as conn:
+                rows = conn.execute(
+                    text("SELECT speaker_label, model FROM video_speaker_centroids WHERE video_id = :v"),
+                    {"v": video_id},
+                ).all()
+                assert [tuple(row) for row in rows] == [("Speaker 1", "new")]
+        finally:
+            with engine.begin() as conn:
+                conn.execute(text(f"DROP OWNED BY {role}"))
+                conn.execute(text(f"DROP ROLE IF EXISTS {role}"))
+
+
 def test_native_search_outbox_update_scope_downgrades_to_broad_trigger(alembic_config, clean_db, test_db_url):
     command.upgrade(alembic_config, "20260714_0300")
     with get_engine(test_db_url) as engine:
