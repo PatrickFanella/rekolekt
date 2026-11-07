@@ -18,5 +18,3 @@ The opt-in [podcast feed](product/podcast-feed.md) (`PODCAST_FEED_ENABLED`) adds
 
 [Chat replay](product/chat-replay.md) serves imported chat for a recording by time range at `GET /videos/{video_id}/chat`. It returns 404 unless `CHAT_REPLAY_ENABLED` is set.
 [Transcript corrections](product/transcript-corrections.md) are opt-in; their routes are registered only when `TRANSCRIPT_CORRECTIONS_ENABLED` is set, so the committed OpenAPI omits them. Transcript responses always carry a `corrections` list of corrected segment ranges with their machine text.
-
-[Clip exports](product/youtube-clips.md) accept millisecond start/end ranges, use yt-dlp for YouTube sections when configured, and expose authenticated status/download endpoints. `POST /clips/from-favorite/{favorite_id}` regenerates a saved range after its cached MP4 expires. `GET /clips/{job_id}/handoff` returns the export's [provenance handoff](product/clip-handoff.md).
