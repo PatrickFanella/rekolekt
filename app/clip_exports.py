@@ -18,6 +18,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from .clip_handoff import provenance_key
+
 MAX_SOURCE_BYTES = 10 * 1024**3
 MAX_OUTPUT_BYTES = 100 * 1024**2
 MAX_DURATION_MS = 120_000
@@ -169,8 +171,16 @@ class ClipStore:
         return source
 
     def enqueue(
-        self, video_id: str, owner_id: str, start_ms: int, end_ms: int, *, youtube_id: str | None = None
+        self,
+        video_id: str,
+        owner_id: str,
+        start_ms: int,
+        end_ms: int,
+        *,
+        youtube_id: str | None = None,
+        provenance: dict | None = None,
     ) -> dict:
+        """Queue or reuse an export. ``provenance`` is the request-time transcript snapshot."""
         owner_id = str(UUID(owner_id))
         if (
             type(start_ms) is not int
@@ -200,6 +210,7 @@ class ClipStore:
                     and all(previous.get(k) == v for k, v in source_key.items())
                     and previous["start_ms"] == start_ms
                     and previous["end_ms"] == end_ms
+                    and provenance_key(previous.get("provenance")) == provenance_key(provenance)
                     and previous["status"] in ("queued", "running", "completed")
                     and previous["expires_at"] > time.time()
                     and (previous["status"] != "completed" or self.media_path(previous["id"]).is_file())
@@ -222,6 +233,8 @@ class ClipStore:
                 "created_at": now,
                 "expires_at": now + self.ttl_seconds,
             }
+            if provenance is not None:
+                job["provenance"] = provenance
             self.save("jobs", job["id"], job)
             return job
 

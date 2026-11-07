@@ -17,7 +17,7 @@ python scripts/clip_exports.py --originals /srv/originals --spool /srv/clip-spoo
 python scripts/clip_exports.py --originals /srv/originals --spool /srv/clip-spool revoke VIDEO_UUID
 ```
 
-Configure `CLIP_ORIGINALS_ROOT` and `CLIP_SPOOL_DIR` for the API and the renderer. With the feature enabled, the registered owner requests a range from the passage editor, checks its status and downloads the authenticated MP4. The operator runs one job with `run JOB_UUID` or `run-next`; there is no implicit background process. An operator must arrange regular `run-next` and cleanup invocations before offering this service. These commands have not been installed as production timers.
+Configure `CLIP_ORIGINALS_ROOT` and `CLIP_SPOOL_DIR` for the API and the renderer. With the feature enabled, the registered owner requests a range from the passage editor, checks its status and downloads the authenticated MP4. A [provenance handoff](clip-handoff.md) describes the completed export; it includes the original's hash but not the rights note. The operator runs one job with `run JOB_UUID` or `run-next`; there is no implicit background process. An operator must arrange regular `run-next` and cleanup invocations before offering this service. These commands have not been installed as production timers.
 
 ## Bounds and failure handling
 
