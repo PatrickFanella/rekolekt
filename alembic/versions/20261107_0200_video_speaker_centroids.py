@@ -9,7 +9,7 @@ diarized again and removed with the video.
 from alembic import op
 
 revision = "20261107_speaker_centroids"
-down_revision = "20261107_transcript_engine"
+down_revision = "20261108_chat_messages"
 branch_labels = None
 depends_on = None
 
