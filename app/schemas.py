@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
+from app.transcripts.words import MAX_WORDS_PER_RESPONSE, WordTimingsNote
+
 
 class OffsetPageInfo(BaseModel):
     limit: int = Field(..., ge=1, description="Requested page size")
@@ -155,7 +157,9 @@ class Segment(BaseModel):
     text: str = Field(..., description="Transcribed text content")
     speaker_label: Optional[str] = Field(None, description="Speaker label from diarization (e.g., 'Speaker 1')")
     speaker_person: Optional[SpeakerPerson] = Field(
-        default=None, description="Archive person the speaker label is attributed to, when one is mapped"
+        default=None,
+        description="Archive person the speaker label is attributed to; omitted when no person is mapped",
+        exclude_if=lambda value: value is None,
     )
 
     model_config = {
@@ -168,6 +172,33 @@ class Segment(BaseModel):
             }
         }
     }
+
+
+class TranscriptWord(BaseModel):
+    """One Whisper word timing inside a transcript segment."""
+
+    start_ms: int = Field(..., description="Word start in milliseconds, within the segment", ge=0)
+    end_ms: int = Field(..., description="Word end in milliseconds, within the segment", ge=0)
+    text: str = Field(..., description="Word text as Whisper produced it, trimmed")
+    probability: Optional[float] = Field(None, description="Whisper word probability (0-1), when stored", ge=0, le=1)
+
+
+class WordTimedSegment(Segment):
+    """A transcript segment with its word timings, returned for `include=words`."""
+
+    words: Optional[List[TranscriptWord]] = Field(
+        ..., description="Word timings in stored order, or null when this segment has no usable word timings"
+    )
+
+
+WORD_TIMINGS_DESCRIPTION = (
+    "available: every segment has words; partial: some segments have words: null; unavailable: no segment has words"
+)
+WORD_TIMINGS_NOTE_DESCRIPTION = (
+    "Why segments lack words: not_stored (no stored or usable timings, e.g. fast preset, older rows, "
+    f"malformed data), word_limit_reached (response limit of {MAX_WORDS_PER_RESPONSE:,} words), "
+    "youtube_captions or merged_transcript"
+)
 
 
 class TranscriptResponse(BaseModel):
@@ -195,6 +226,14 @@ class TranscriptResponse(BaseModel):
             }
         }
     }
+
+
+class WordTimedTranscriptResponse(TranscriptResponse):
+    """Raw transcript with word timings, returned for `include=words`."""
+
+    segments: List[WordTimedSegment] = Field(..., description="Transcript segments with word timings")  # type: ignore[assignment]
+    word_timings: Literal["available", "partial", "unavailable"] = Field(..., description=WORD_TIMINGS_DESCRIPTION)
+    word_timings_note: Optional[WordTimingsNote] = Field(None, description=WORD_TIMINGS_NOTE_DESCRIPTION)
 
 
 class YTSegment(BaseModel):
@@ -1119,13 +1158,34 @@ class EnhancedSegment(Segment):
     temperature: Optional[float] = Field(None, description="Sampling temperature used")
 
 
-class TranscriptMetadata(BaseModel):
-    """Metadata about a transcript."""
+class TranscriptEngine(BaseModel):
+    """The transcription engine that actually produced a native transcript."""
 
+    model: Optional[str] = Field(None, description="Model that ran, after any fallback")
+    backend: Optional[str] = Field(None, description="Engine backend: faster-whisper or whisper")
+    device: Optional[str] = Field(None, description="Device the model ran on, for example cuda or cpu")
+    compute_type: Optional[str] = Field(None, description="Compute type, for example float16 or int8")
+    version: Optional[str] = Field(None, description="Installed version of the backend library")
+
+
+class TranscriptMetadata(BaseModel):
+    """Metadata about a video's native (Whisper) transcript."""
+
+    video_id: uuid.UUID = Field(..., description="Video the transcript belongs to")
     detected_language: Optional[str] = Field(None, description="Detected language code")
     language_probability: Optional[float] = Field(None, description="Language detection confidence")
-    model: str = Field(..., description="Whisper model used")
-    quality_preset: Optional[str] = Field(None, description="Quality preset used")
+    model: Optional[str] = Field(
+        None,
+        description=(
+            "Model stored on the transcript. When provenance is unknown this is the configured model, "
+            "which may not be the one that ran."
+        ),
+    )
+    provenance: Literal["recorded", "unknown"] = Field(
+        ..., description="recorded when the engine was stored at transcription time; unknown for older transcripts"
+    )
+    engine: Optional[TranscriptEngine] = Field(None, description="Engine that produced the transcript; null if unknown")
+    created_at: datetime = Field(..., description="When the transcript was stored")
 
 
 # Transcript cleanup schemas
@@ -1197,7 +1257,9 @@ class CleanedSegment(BaseModel):
     text_cleaned: str = Field(..., description="Text after cleanup applied")
     speaker_label: Optional[str] = Field(None, description="Speaker label from diarization")
     speaker_person: Optional[SpeakerPerson] = Field(
-        default=None, description="Archive person the speaker label is attributed to, when one is mapped"
+        default=None,
+        description="Archive person the speaker label is attributed to; omitted when no person is mapped",
+        exclude_if=lambda value: value is None,
     )
     sentence_boundary: bool = Field(False, description="True if this segment ends a sentence")
     likely_hallucination: bool = Field(False, description="True if detected as potential hallucination")
@@ -1266,7 +1328,9 @@ class TranscriptBlockResponse(BaseModel):
     end_ms: int = Field(..., description="End time in milliseconds", ge=0)
     speaker_label: Optional[str] = Field(None, description="Speaker label for the block")
     speaker_person: Optional[SpeakerPerson] = Field(
-        default=None, description="Archive person the speaker label is attributed to, when one is mapped"
+        default=None,
+        description="Archive person the speaker label is attributed to; omitted when no person is mapped",
+        exclude_if=lambda value: value is None,
     )
     text: str = Field(..., description="Formatted block text")
     segment_ids: List[int] = Field(..., description="Source segment indices included in the block")
@@ -1326,6 +1390,14 @@ class FormattedTranscriptResponse(BaseModel):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of formatting"
     )
+
+
+class WordTimedFormattedTranscriptResponse(FormattedTranscriptResponse):
+    """Formatted transcript whose raw segments carry word timings, returned for `include=words`."""
+
+    segments: List[WordTimedSegment] = Field(..., description="Raw transcript segments with word timings")  # type: ignore[assignment]
+    word_timings: Literal["available", "partial", "unavailable"] = Field(..., description=WORD_TIMINGS_DESCRIPTION)
+    word_timings_note: Optional[WordTimingsNote] = Field(None, description=WORD_TIMINGS_NOTE_DESCRIPTION)
 
 
 class SpeakerSample(BaseModel):

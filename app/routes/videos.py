@@ -1,6 +1,6 @@
 import json
 import uuid
-from typing import Literal, Union
+from typing import Literal, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import text
@@ -10,7 +10,7 @@ from ..archive.product_intelligence import quoted_moments, related_episodes
 from ..archive.video_chapters import build_grounded_chapters
 from ..audit import ACTION_USER_DATA_DELETION, write_audit_from_request
 from ..db import get_db
-from ..exceptions import AuthorizationError, TranscriptNotReadyError, VideoNotFoundError
+from ..exceptions import AuthorizationError, TranscriptNotReadyError, ValidationError, VideoNotFoundError
 from ..feed_cursor import CursorError, FeedCursor, decode_cursor, encode_cursor, filter_fingerprint
 from ..schemas import (
     CleanedTranscriptResponse,
@@ -24,10 +24,15 @@ from ..schemas import (
     Segment,
     SpeakerPerson,
     TranscriptBlockResponse,
+    TranscriptEngine,
+    TranscriptMetadata,
     TranscriptResponse,
     VideoChapterResponse,
     VideoChaptersResponse,
     VideoInfo,
+    WordTimedFormattedTranscriptResponse,
+    WordTimedSegment,
+    WordTimedTranscriptResponse,
     YouTubeTranscriptResponse,
     YTSegment,
 )
@@ -38,6 +43,7 @@ from ..transcripts.blocks import FORMATTER_VERSION, build_transcript_blocks
 from ..transcripts.merged import build_merged_transcript
 from ..transcripts.service import TranscriptPresentationService
 from ..transcripts.types import TranscriptSegment
+from ..transcripts.words import words_for_segments
 from ..transcripts.youtube_formatting import build_youtube_caption_blocks, format_youtube_caption_text
 
 router = APIRouter(prefix="", tags=["Videos"])
@@ -157,9 +163,36 @@ def _youtube_segments_for_merge(db, video_id: uuid.UUID) -> tuple[dict | None, l
     return yt, rows, [TranscriptSegment(start_ms=r[0], end_ms=r[1], text=r[2], speaker_label=None) for r in rows]
 
 
+def _with_word_timings(payload, segment_rows):
+    """Attach word timings to a raw or formatted transcript response."""
+    if payload.source == "whisper":
+        words, status, note = words_for_segments(segment_rows)
+    else:
+        words, status = [None] * len(payload.segments), "unavailable"
+        note = "youtube_captions" if payload.source == "youtube" else "merged_transcript"
+    model = (
+        WordTimedFormattedTranscriptResponse
+        if isinstance(payload, FormattedTranscriptResponse)
+        else WordTimedTranscriptResponse
+    )
+    fields = {name: getattr(payload, name) for name in type(payload).model_fields if name != "segments"}
+    return model(
+        **fields,
+        segments=[WordTimedSegment(**s.model_dump(), words=w) for s, w in zip(payload.segments, words, strict=True)],
+        word_timings=status,
+        word_timings_note=note,
+    )
+
+
 @router.get(
     "/videos/{video_id}/transcript",
-    response_model=Union[TranscriptResponse, CleanedTranscriptResponse, FormattedTranscriptResponse],
+    response_model=Union[
+        TranscriptResponse,
+        CleanedTranscriptResponse,
+        FormattedTranscriptResponse,
+        WordTimedTranscriptResponse,
+        WordTimedFormattedTranscriptResponse,
+    ],
     summary="Get video transcript",
     description="""
     Retrieve the Whisper-generated transcript for a video with optional speaker diarization.
@@ -176,6 +209,13 @@ def _youtube_segments_for_merge(db, video_id: uuid.UUID) -> tuple[dict | None, l
     - `raw` (default): Returns raw Whisper-generated segments without any processing
     - `cleaned`: Returns segments with cleanup applied (filler removal, normalization, punctuation)
     - `formatted`: Returns fully formatted text with speaker labels and paragraph structure
+
+    **Word timings:** `include=words` adds a `words` list to each raw segment in `raw` and
+    `formatted` modes, plus `word_timings` (`available`, `partial` or `unavailable`) and
+    `word_timings_note`. A segment without usable stored timings has `words: null`. YouTube
+    captions and merged transcripts have no word timings. A response carries at most 100,000
+    words; later segments get `words: null` and the note `word_limit_reached`.
+    `mode=cleaned` does not support `include=words`.
 
     **Note:** Responses are cached per mode. ETags reflect the mode to avoid stale caches.
     """,
@@ -211,10 +251,14 @@ def get_transcript(
         "whisper",
         description="Transcript source policy: whisper (default), youtube, merged, or best (merged if both sources exist)",
     ),
+    include: Optional[Literal["words"]] = Query(
+        None,
+        description="Set to `words` to add stored Whisper word timings to raw segments (raw and formatted modes)",
+    ),
     db=Depends(get_db),
 ):
     """Get the Whisper-generated transcript for a video."""
-    result = _get_transcript(video_id, response, mode, source, db)
+    result = _get_transcript(video_id, response, mode, source, include, db)
     people = transcript_speaker_people(db, video_id)
     if people:
         for item in [*result.segments, *getattr(result, "blocks", [])]:
@@ -224,13 +268,18 @@ def get_transcript(
     return result
 
 
-def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: str, db):
+def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: str, include: str | None, db):
+    with_words = include == "words"
+    if with_words and mode == "cleaned":
+        raise ValidationError("include=words is not available with mode=cleaned", field="include")
     # Check if video exists
     video = crud.get_video(db, video_id)
     if not video:
         raise VideoNotFoundError(str(video_id))
 
-    segs = crud.list_segments(db, video_id)
+    segs = crud.list_segments_with_words(db, video_id) if with_words else crud.list_segments(db, video_id)
+    finish = (lambda payload: _with_word_timings(payload, segs)) if with_words else (lambda payload: payload)
+    etag_suffix = "-words" if with_words else ""
     segments = [transcript_presentation_service.from_db_row(r) for r in segs]
     yt, yt_segs, yt_segments_for_merge = (
         _youtube_segments_for_merge(db, video_id) if source in ("best", "merged", "youtube") else (None, [], [])
@@ -243,27 +292,31 @@ def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: 
             for s in merged.segments
         ]
         if response:
-            response.headers["ETag"] = f'"{video_id}-{mode}-merged"'
+            response.headers["ETag"] = f'"{video_id}-{mode}-merged{etag_suffix}"'
             response.headers["Cache-Control"] = "public, max-age=3600"
         if mode == "raw":
-            return TranscriptResponse(
+            return finish(
+                TranscriptResponse(
+                    video_id=video_id,
+                    segments=merged_segments,
+                    source="merged",
+                    source_label="Merged transcript",
+                )
+            )
+        blocks = [_block_response(block, include_merge_metadata=True) for block in merged.blocks]
+        return finish(
+            FormattedTranscriptResponse(
                 video_id=video_id,
                 segments=merged_segments,
+                text="\n\n".join(
+                    f"{block.speaker_label}:\n{block.text}" if block.speaker_label else block.text for block in blocks
+                ),
+                format="structured",
+                cleanup_config=_cleanup_config(),
+                blocks=blocks,
                 source="merged",
                 source_label="Merged transcript",
             )
-        blocks = [_block_response(block, include_merge_metadata=True) for block in merged.blocks]
-        return FormattedTranscriptResponse(
-            video_id=video_id,
-            segments=merged_segments,
-            text="\n\n".join(
-                f"{block.speaker_label}:\n{block.text}" if block.speaker_label else block.text for block in blocks
-            ),
-            format="structured",
-            cleanup_config=_cleanup_config(),
-            blocks=blocks,
-            source="merged",
-            source_label="Merged transcript",
         )
 
     if source == "youtube" or (source == "best" and not segs):
@@ -271,25 +324,29 @@ def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: 
             yt_segments = [Segment(start_ms=r[0], end_ms=r[1], text=r[2], speaker_label=None) for r in yt_segs]
             rows = [(r[0], r[1], r[2]) for r in yt_segs]
             if response:
-                response.headers["ETag"] = f'"{video_id}-{mode}-youtube"'
+                response.headers["ETag"] = f'"{video_id}-{mode}-youtube{etag_suffix}"'
                 response.headers["Cache-Control"] = "public, max-age=3600"
             if mode == "raw":
-                return TranscriptResponse(
+                return finish(
+                    TranscriptResponse(
+                        video_id=video_id,
+                        segments=yt_segments,
+                        source="youtube",
+                        source_label="YouTube captions",
+                    )
+                )
+            blocks = [_block_response(b) for b in build_youtube_caption_blocks(rows)]
+            return finish(
+                FormattedTranscriptResponse(
                     video_id=video_id,
                     segments=yt_segments,
+                    text=format_youtube_caption_text(rows),
+                    format="structured",
+                    cleanup_config=_cleanup_config(),
+                    blocks=blocks,
                     source="youtube",
                     source_label="YouTube captions",
                 )
-            blocks = [_block_response(b) for b in build_youtube_caption_blocks(rows)]
-            return FormattedTranscriptResponse(
-                video_id=video_id,
-                segments=yt_segments,
-                text=format_youtube_caption_text(rows),
-                format="structured",
-                cleanup_config=_cleanup_config(),
-                blocks=blocks,
-                source="youtube",
-                source_label="YouTube captions",
             )
         if source == "youtube":
             raise TranscriptNotReadyError(str(video_id), "no_youtube_transcript")
@@ -298,14 +355,14 @@ def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: 
         raise TranscriptNotReadyError(str(video_id), "processing")
 
     # Set ETag based on mode and video_id for cache differentiation
-    etag = f'"{video_id}-{mode}-whisper"'
+    etag = f'"{video_id}-{mode}-whisper{etag_suffix}"'
     if response:
         response.headers["ETag"] = etag
         response.headers["Cache-Control"] = "public, max-age=3600"
 
     # Handle different modes
     if mode == "raw":
-        return transcript_presentation_service.present_raw(video_id, segments)
+        return finish(transcript_presentation_service.present_raw(video_id, segments))
 
     elif mode == "cleaned":
         return transcript_presentation_service.present_cleaned(video_id, segments)
@@ -341,24 +398,67 @@ def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: 
             f"{block.speaker_label}:\n{block.text}" if block.speaker_label else block.text for block in blocks
         )
 
-        return FormattedTranscriptResponse(
-            video_id=video_id,
-            segments=[
-                Segment(
-                    start_ms=s.start_ms,
-                    end_ms=s.end_ms,
-                    text=s.text,
-                    speaker_label=s.speaker_label,
-                )
-                for s in segments
-            ],
-            text=formatted_text,
-            format="structured",
-            cleanup_config=_cleanup_config(),
-            blocks=blocks,
-            source="whisper",
-            source_label="Whisper transcript",
+        return finish(
+            FormattedTranscriptResponse(
+                video_id=video_id,
+                segments=[
+                    Segment(
+                        start_ms=s.start_ms,
+                        end_ms=s.end_ms,
+                        text=s.text,
+                        speaker_label=s.speaker_label,
+                    )
+                    for s in segments
+                ],
+                text=formatted_text,
+                format="structured",
+                cleanup_config=_cleanup_config(),
+                blocks=blocks,
+                source="whisper",
+                source_label="Whisper transcript",
+            )
         )
+
+
+@router.get(
+    "/videos/{video_id}/transcript/metadata",
+    response_model=TranscriptMetadata,
+    summary="Get native transcript metadata",
+    description="""
+    Return the language and the transcription engine (model, backend, device, compute type and
+    library version) that produced the video's native Whisper transcript. Transcripts stored
+    before engine provenance was recorded report `provenance: unknown` and a null `engine`.
+    """,
+    responses={
+        200: {"description": "Transcript metadata retrieved successfully"},
+        404: {"description": "Video not found", "model": ErrorResponse},
+        409: {"description": "The video has no native transcript yet", "model": ErrorResponse},
+    },
+)
+def get_transcript_metadata(video_id: uuid.UUID, db=Depends(get_db)):
+    video = crud.get_video(db, video_id)
+    if not video:
+        raise VideoNotFoundError(str(video_id))
+    row = crud.get_transcript_metadata(db, video_id)
+    if not row:
+        raise TranscriptNotReadyError(str(video_id), str(dict(video).get("state") or "unknown"))
+    engine_fields = {
+        "model": row["engine_model"],
+        "backend": row["engine_backend"],
+        "device": row["engine_device"],
+        "compute_type": row["engine_compute_type"],
+        "version": row["engine_version"],
+    }
+    recorded = any(value is not None for value in engine_fields.values())
+    return TranscriptMetadata(
+        video_id=video_id,
+        detected_language=row["detected_language"],
+        language_probability=row["language_probability"],
+        model=row["model"],
+        provenance="recorded" if recorded else "unknown",
+        engine=TranscriptEngine(**engine_fields) if recorded else None,
+        created_at=row["created_at"],
+    )
 
 
 @router.get(

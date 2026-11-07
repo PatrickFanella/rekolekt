@@ -10,6 +10,7 @@
 | Login | anonymous |
 | Admin routes | authenticated plus `admin:access` capability |
 | Search, public archive/video reads, suggestions, mention exports | public GET |
+| Recordings RSS feed and JSON chapters | public GET; opt-in feature (`PODCAST_FEED_ENABLED`) |
 | Favorites, saved searches, profile | authenticated owner |
 | Clip request/status/download and export from a saved favorite | authenticated owner; opt-in feature; local-original mode also requires registered source ownership |
 | Jobs list/read/write | authenticated owner or scoped API key (`jobs:read`, `jobs:write`) |

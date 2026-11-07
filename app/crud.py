@@ -167,6 +167,36 @@ def list_segments(db, video_id):
     return [list(row) for row in rows]
 
 
+def list_segments_with_words(db, video_id):
+    """Like ``list_segments`` with each row's stored word list (or None) appended."""
+    params = {"v": str(video_id)}
+    direct_rows = db.execute(
+        text("""
+            SELECT s.start_ms, s.end_ms, s.text, s.speaker_label, w.words
+            FROM segments s
+            LEFT JOIN segment_words w ON w.segment_id = s.id
+            WHERE s.video_id = :v
+            ORDER BY s.start_ms
+            """),
+        params,
+    ).all()
+    if direct_rows:
+        return [list(row) for row in direct_rows]
+
+    rows = db.execute(
+        text("""
+            SELECT s.start_ms, s.end_ms, s.text, s.speaker_label, w.words
+            FROM segments s
+            JOIN transcripts t ON t.id = s.transcript_id
+            LEFT JOIN segment_words w ON w.segment_id = s.id
+            WHERE t.video_id = :v
+            ORDER BY s.start_ms
+            """),
+        params,
+    ).all()
+    return [list(row) for row in rows]
+
+
 @_retry_on_transient_error
 @cache(
     prefix="video",
@@ -968,6 +998,25 @@ def list_completed_videos(db, limit: int = 12, offset: int = 0):
         )
         .mappings()
         .all()
+    )
+
+
+@_retry_on_transient_error
+def get_transcript_metadata(db, video_id):
+    return (
+        db.execute(
+            text("""
+                SELECT model, detected_language, language_probability, created_at,
+                       engine_model, engine_backend, engine_device, engine_compute_type, engine_version
+                FROM transcripts
+                WHERE video_id = :v
+                ORDER BY created_at DESC, id
+                LIMIT 1
+                """),
+            {"v": str(video_id)},
+        )
+        .mappings()
+        .first()
     )
 
 

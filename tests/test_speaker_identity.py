@@ -169,8 +169,8 @@ def test_map_reindexes_filters_search_and_shows_the_person(client: TestClient, d
     assert _search_ids(client, "/search", "zephyrmap", "nobody-at-all") == set()
 
     transcript = client.get(f"/videos/{video_id}/transcript").json()
-    people = [segment["speaker_person"] for segment in transcript["segments"]]
-    assert people[0] is None  # Speaker 1 is unmapped and keeps only its raw label
+    people = [segment.get("speaker_person") for segment in transcript["segments"]]
+    assert people[0] is None  # Speaker 1 is unmapped: the field is omitted and the raw label stays
     assert people[1] == {"slug": guest["slug"], "display_name": guest["display_name"]}
     assert transcript["segments"][1]["speaker_label"] == "Speaker 2"
     formatted = client.get(f"/videos/{video_id}/transcript", params={"mode": "formatted"}).json()
@@ -201,7 +201,7 @@ def test_clear_unmaps_reindexes_and_blocks_automatic_refill(client: TestClient, 
     assert response.json()["person"] is None
     assert [p["speaker_person"] for p in _outbox_payloads(db_session, segments["Speaker 1"])] == [None, None]
     assert _search_ids(client, "/search", "quillclear", host["slug"]) == set()
-    assert client.get(f"/videos/{video_id}/transcript").json()["segments"][0]["speaker_person"] is None
+    assert client.get(f"/videos/{video_id}/transcript").json()["segments"][0].get("speaker_person") is None
     listing = client.get(f"/admin/videos/{video_id}/speakers", cookies=cookies).json()
     assert listing["items"][0]["mapping"]["status"] == "cleared"
     assert listing["items"][0]["suggestion"]["slug"] == host["slug"]
@@ -241,7 +241,7 @@ def test_reprocessing_invalidates_mappings_visibly(client: TestClient, db_sessio
     assert {item["speaker_label"]: (item["mapping"] or {}).get("status") for item in listing["items"]}[
         "Speaker 2"
     ] == "stale"
-    assert all(s["speaker_person"] is None for s in client.get(f"/videos/{video_id}/transcript").json()["segments"])
+    assert all(s.get("speaker_person") is None for s in client.get(f"/videos/{video_id}/transcript").json()["segments"])
     assert _search_ids(client, "/search", f"orbit{change}", guest["slug"]) == set()
 
     # Mapping the label again makes it current.

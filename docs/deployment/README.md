@@ -20,3 +20,7 @@ Core is headless: the release publishes backend role images only (`api`, `ingest
 ## Client branding
 
 See [client branding and shared core updates](client-branding.md) for independent deployments using the same core release.
+
+## Channel sync rules
+
+Recurring channel sync can filter uploads per channel by duration, title and publication date. See [channel sync inclusion rules](../product/channel-sync-rules.md) for the file format and the client overlay snippet.

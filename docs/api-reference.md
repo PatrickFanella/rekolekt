@@ -12,4 +12,8 @@ Access requirements are in [the access matrix](access-matrix.md). `GET /support`
 
 [Clip exports](product/youtube-clips.md) accept millisecond start/end ranges, use yt-dlp for YouTube sections when configured, and expose authenticated status/download endpoints. `POST /clips/from-favorite/{favorite_id}` regenerates a saved range after its cached MP4 expires. `GET /clips/{job_id}/handoff` returns the export's [provenance handoff](product/clip-handoff.md).
 
+The opt-in [podcast feed](product/podcast-feed.md) (`PODCAST_FEED_ENABLED`) adds `GET /feeds/recordings.rss`, an RSS 2.0 feed of completed recordings with `podcast:transcript` and `podcast:chapters` links and no enclosures, and `GET /videos/{video_id}/podcast-chapters.json`, published chapters in the Podcasting 2.0 JSON chapters format.
+
+`GET /videos/{video_id}/transcript` and `transcript.json` accept `include=words` to add stored Whisper [word timings](product/word-timings.md) to each segment, bounded to 100,000 words per response.
+
 [Speaker identification](product/speaker-identification.md) adds `speaker=<person-slug>` to `/search`, `/search/grouped` and `/search/mention-map`, `speaker_person` to transcript segments and blocks, and admin endpoints under `/admin/videos/{video_id}/speakers` and `/admin/archive/metadata/people/{slug}/voice-references`.
