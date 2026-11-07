@@ -3445,6 +3445,66 @@
         "title": "CleanupStats",
         "type": "object"
       },
+      "ClipHandoff": {
+        "description": "Token-free provenance document for clpr and other editors.",
+        "properties": {
+          "archive": {
+            "$ref": "#/components/schemas/HandoffArchive"
+          },
+          "captions": {
+            "$ref": "#/components/schemas/HandoffCaptions"
+          },
+          "export_id": {
+            "format": "uuid",
+            "title": "Export Id",
+            "type": "string"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "number"
+          },
+          "media": {
+            "$ref": "#/components/schemas/HandoffMedia"
+          },
+          "passage": {
+            "$ref": "#/components/schemas/HandoffPassage"
+          },
+          "provenance": {
+            "$ref": "#/components/schemas/HandoffProvenance"
+          },
+          "recording": {
+            "$ref": "#/components/schemas/HandoffRecording"
+          },
+          "schema": {
+            "const": "rekolekt.clip-handoff",
+            "title": "Schema",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "transcript": {
+            "$ref": "#/components/schemas/HandoffTranscript"
+          }
+        },
+        "required": [
+          "schema",
+          "schema_version",
+          "export_id",
+          "generated_at",
+          "archive",
+          "recording",
+          "passage",
+          "transcript",
+          "captions",
+          "media",
+          "provenance"
+        ],
+        "title": "ClipHandoff",
+        "type": "object"
+      },
       "ClipRequest": {
         "additionalProperties": false,
         "properties": {
@@ -3459,6 +3519,22 @@
             "minimum": 0.0,
             "title": "Start Ms",
             "type": "integer"
+          },
+          "transcript_source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "whisper",
+                  "youtube"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Transcript to record in the provenance handoff; defaults to native, then captions",
+            "title": "Transcript Source"
           },
           "video_id": {
             "format": "uuid",
@@ -3876,6 +3952,369 @@
           }
         },
         "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "HandoffArchive": {
+        "properties": {
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "origin": {
+            "title": "Origin",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "origin"
+        ],
+        "title": "HandoffArchive",
+        "type": "object"
+      },
+      "HandoffCaptions": {
+        "properties": {
+          "cues": {
+            "items": {
+              "$ref": "#/components/schemas/HandoffCue"
+            },
+            "title": "Cues",
+            "type": "array"
+          },
+          "cues_truncated": {
+            "title": "Cues Truncated",
+            "type": "boolean"
+          },
+          "text_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Text Sha256"
+          },
+          "timing": {
+            "enum": [
+              "clip-relative",
+              "unavailable"
+            ],
+            "title": "Timing",
+            "type": "string"
+          }
+        },
+        "required": [
+          "timing",
+          "cues",
+          "cues_truncated",
+          "text_sha256"
+        ],
+        "title": "HandoffCaptions",
+        "type": "object"
+      },
+      "HandoffCue": {
+        "properties": {
+          "end_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Milliseconds from the start of the clip; null when the source has no end",
+            "title": "End Ms"
+          },
+          "start_ms": {
+            "description": "Milliseconds from the start of the clip",
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "text_truncated": {
+            "default": false,
+            "title": "Text Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "title": "HandoffCue",
+        "type": "object"
+      },
+      "HandoffMedia": {
+        "properties": {
+          "bytes": {
+            "title": "Bytes",
+            "type": "integer"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "sha256": {
+            "title": "Sha256",
+            "type": "string"
+          },
+          "type": {
+            "const": "video/mp4",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "filename",
+          "bytes",
+          "sha256"
+        ],
+        "title": "HandoffMedia",
+        "type": "object"
+      },
+      "HandoffMediaSource": {
+        "properties": {
+          "kind": {
+            "enum": [
+              "youtube-range",
+              "registered-original"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "original_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Sha256"
+          },
+          "timeline_aligned": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timeline Aligned"
+          },
+          "youtube_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Id"
+          }
+        },
+        "required": [
+          "kind"
+        ],
+        "title": "HandoffMediaSource",
+        "type": "object"
+      },
+      "HandoffPassage": {
+        "properties": {
+          "duration_ms": {
+            "title": "Duration Ms",
+            "type": "integer"
+          },
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "player_url": {
+            "title": "Player Url",
+            "type": "string"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "url",
+          "player_url",
+          "start_ms",
+          "end_ms",
+          "duration_ms"
+        ],
+        "title": "HandoffPassage",
+        "type": "object"
+      },
+      "HandoffProvenance": {
+        "properties": {
+          "basis": {
+            "const": "declared",
+            "title": "Basis",
+            "type": "string"
+          },
+          "media_source": {
+            "$ref": "#/components/schemas/HandoffMediaSource"
+          },
+          "statement": {
+            "title": "Statement",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "statement",
+          "media_source"
+        ],
+        "title": "HandoffProvenance",
+        "type": "object"
+      },
+      "HandoffRecording": {
+        "properties": {
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          },
+          "youtube_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Id"
+          }
+        },
+        "required": [
+          "video_id"
+        ],
+        "title": "HandoffRecording",
+        "type": "object"
+      },
+      "HandoffTranscript": {
+        "properties": {
+          "captured_at": {
+            "title": "Captured At",
+            "type": "number"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "language": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Language"
+          },
+          "revision_sha256": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "SHA-256 of every segment at request time",
+            "title": "Revision Sha256"
+          },
+          "segment_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Segment Count"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "enum": [
+                  "whisper",
+                  "youtube"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source"
+          },
+          "status": {
+            "enum": [
+              "captured",
+              "unavailable"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "timing": {
+            "anyOf": [
+              {
+                "const": "segment",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timing"
+          },
+          "transcript_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transcript Id"
+          }
+        },
+        "required": [
+          "status",
+          "captured_at"
+        ],
+        "title": "HandoffTranscript",
         "type": "object"
       },
       "HighlightRange": {
@@ -11403,6 +11842,50 @@
           }
         },
         "summary": "Download Clip",
+        "tags": [
+          "Original clip exports"
+        ]
+      }
+    },
+    "/clips/{job_id}/handoff": {
+      "get": {
+        "description": "Describe a completed export: recording, range, request-time transcript and output hash.",
+        "operationId": "clip_handoff_clips__job_id__handoff_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "job_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Job Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClipHandoff"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clip Handoff",
         "tags": [
           "Original clip exports"
         ]

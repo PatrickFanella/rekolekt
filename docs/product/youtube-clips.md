@@ -34,7 +34,8 @@ YouTube source to remain available.
 
 All clip routes require an authenticated account and an enabled feature.
 
-- `POST /clips`: supply `video_id`, `start_ms`, `end_ms`. The video must already
+- `POST /clips`: supply `video_id`, `start_ms`, `end_ms` and optionally
+  `transcript_source`. The video must already
   exist in the archive. The API reads its YouTube ID from PostgreSQL; arbitrary
   source URLs and downloader arguments are not accepted.
 - `POST /users/me/favorites`: save `video_id`, `start_ms`, `end_ms` and optional
@@ -45,6 +46,10 @@ All clip routes require an authenticated account and an enabled feature.
 - `GET /clips/{job_id}/download`: private MP4 attachment, `Cache-Control:
   private, no-store`. Owners alone can read/download their exports. Source
   deletion blocks subsequent access.
+- `GET /clips/{job_id}/handoff`: token-free [provenance handoff](clip-handoff.md)
+  for a completed export: recording, range, the transcript captured at request
+  time with clip-relative cues, and the MP4's hash. It fails in the same cases
+  as the download.
 
 The frontend polls pending jobs automatically and requests the download once
 per export action. Closing the passage panel cancels its polling; it does not
