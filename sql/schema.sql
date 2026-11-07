@@ -754,3 +754,51 @@ CREATE TABLE speaker_voice_references (
     CONSTRAINT speaker_voice_references_segments_nonempty CHECK (cardinality(segment_ids) > 0)
 );
 CREATE INDEX speaker_voice_references_person_idx ON speaker_voice_references (person_id);
+CREATE TABLE chat_imports (
+    video_id UUID PRIMARY KEY REFERENCES videos(id) ON DELETE CASCADE,
+    source_format TEXT NOT NULL CHECK (source_format IN ('twitchdownloader', 'rustlog')),
+    source_name TEXT NOT NULL CHECK (length(source_name) BETWEEN 1 AND 255),
+    source_digest TEXT NOT NULL CHECK (source_digest ~ '^[0-9a-f]{64}$'),
+    broadcast_started_at TIMESTAMPTZ,
+    alignment_method TEXT NOT NULL CHECK (alignment_method IN ('manual', 'audio')),
+    alignment_mapping JSONB NOT NULL CHECK (jsonb_typeof(alignment_mapping) = 'array'),
+    alignment_confidence DOUBLE PRECISION CHECK (alignment_confidence BETWEEN 0 AND 1),
+    message_count INTEGER NOT NULL CHECK (message_count >= 0),
+    imported_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK ((alignment_method = 'manual') = (alignment_confidence IS NULL))
+);
+CREATE TABLE chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    video_id UUID NOT NULL REFERENCES chat_imports(video_id) ON DELETE CASCADE,
+    offset_ms INTEGER NOT NULL CHECK (offset_ms >= 0),
+    author TEXT NOT NULL CHECK (length(author) BETWEEN 1 AND 64),
+    body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 1000),
+    metadata JSONB
+);
+CREATE INDEX chat_messages_video_offset ON chat_messages (video_id, offset_ms, id);
+CREATE TABLE segment_corrections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    source TEXT NOT NULL CHECK (source IN ('whisper','youtube')),
+    start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+    end_ms INTEGER NOT NULL CHECK (end_ms >= start_ms),
+    original_sha256 TEXT NOT NULL CHECK (original_sha256 ~ '^[0-9a-f]{64}$'),
+    original_text TEXT NOT NULL,
+    corrected_text TEXT NOT NULL CHECK (length(btrim(corrected_text)) BETWEEN 1 AND 2000),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','accepted','rejected','stale','superseded')),
+    proposer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    reviewer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    review_reason TEXT CHECK (review_reason IS NULL OR length(btrim(review_reason)) BETWEEN 1 AND 1000),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reviewed_at TIMESTAMPTZ,
+    accepted_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (status <> 'accepted' OR accepted_at IS NOT NULL)
+);
+CREATE UNIQUE INDEX segment_corrections_one_applied
+    ON segment_corrections(video_id, source, start_ms, end_ms) WHERE status = 'accepted';
+CREATE INDEX segment_corrections_by_video ON segment_corrections(video_id, source, start_ms);
+CREATE INDEX segment_corrections_queue ON segment_corrections(status, created_at)
+    WHERE status IN ('pending','stale');
+CREATE INDEX segment_corrections_proposer ON segment_corrections(proposer_id, created_at DESC);

@@ -3135,6 +3135,197 @@
         "title": "BrandTheme",
         "type": "object"
       },
+      "ChatBadge": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "version"
+        ],
+        "title": "ChatBadge",
+        "type": "object"
+      },
+      "ChatEmote": {
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "title": "ChatEmote",
+        "type": "object"
+      },
+      "ChatImportInfo": {
+        "properties": {
+          "alignment_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "0-1 for audio alignment; null for a manual offset",
+            "title": "Alignment Confidence"
+          },
+          "alignment_method": {
+            "enum": [
+              "manual",
+              "audio"
+            ],
+            "title": "Alignment Method",
+            "type": "string"
+          },
+          "imported_at": {
+            "format": "date-time",
+            "title": "Imported At",
+            "type": "string"
+          },
+          "message_count": {
+            "title": "Message Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "alignment_method",
+          "message_count",
+          "imported_at"
+        ],
+        "title": "ChatImportInfo",
+        "type": "object"
+      },
+      "ChatMessage": {
+        "properties": {
+          "author": {
+            "description": "Display name as it appears in the imported log",
+            "title": "Author",
+            "type": "string"
+          },
+          "badges": {
+            "items": {
+              "$ref": "#/components/schemas/ChatBadge"
+            },
+            "title": "Badges",
+            "type": "array"
+          },
+          "color": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Color"
+          },
+          "emotes": {
+            "items": {
+              "$ref": "#/components/schemas/ChatEmote"
+            },
+            "title": "Emotes",
+            "type": "array"
+          },
+          "offset_ms": {
+            "description": "Time on the recording's timeline",
+            "title": "Offset Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "offset_ms",
+          "author",
+          "text"
+        ],
+        "title": "ChatMessage",
+        "type": "object"
+      },
+      "ChatRangeResponse": {
+        "properties": {
+          "chat_import": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatImportInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "end_ms": {
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "imported": {
+            "description": "False when no chat log has been imported for this recording",
+            "title": "Imported",
+            "type": "boolean"
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/ChatMessage"
+            },
+            "title": "Messages",
+            "type": "array"
+          },
+          "next_start_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "When truncated, request again from this start_ms",
+            "title": "Next Start Ms"
+          },
+          "start_ms": {
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "truncated": {
+            "default": false,
+            "description": "More messages exist in the range than were returned",
+            "title": "Truncated",
+            "type": "boolean"
+          },
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "imported",
+          "start_ms",
+          "end_ms"
+        ],
+        "title": "ChatRangeResponse",
+        "type": "object"
+      },
       "CleanedSegment": {
         "description": "Transcript segment with cleaned text.",
         "example": {
@@ -3241,6 +3432,14 @@
           "cleanup_config": {
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
+          },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
           },
           "created_at": {
             "description": "Timestamp of cleanup",
@@ -3647,6 +3846,33 @@
         "title": "CommunityTimeline",
         "type": "object"
       },
+      "CorrectionMark": {
+        "description": "A segment range showing an accepted user correction instead of the machine text.",
+        "properties": {
+          "end_ms": {
+            "description": "End of the corrected segment in milliseconds",
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "machine_text": {
+            "description": "The machine transcript text this correction replaced",
+            "title": "Machine Text",
+            "type": "string"
+          },
+          "start_ms": {
+            "description": "Start of the corrected segment in milliseconds",
+            "title": "Start Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "machine_text"
+        ],
+        "title": "CorrectionMark",
+        "type": "object"
+      },
       "CreateAPIKeyRequest": {
         "description": "Request to create a new API key.",
         "properties": {
@@ -3799,6 +4025,14 @@
           "cleanup_config": {
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
+          },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
           },
           "created_at": {
             "description": "Timestamp of formatting",
@@ -6757,6 +6991,10 @@
             "title": "Atproto Enabled",
             "type": "boolean"
           },
+          "chat_replay_enabled": {
+            "title": "Chat Replay Enabled",
+            "type": "boolean"
+          },
           "clip_exports_enabled": {
             "title": "Clip Exports Enabled",
             "type": "boolean"
@@ -6830,6 +7068,10 @@
             "$ref": "#/components/schemas/BrandTheme",
             "deprecated": true,
             "description": "Deprecated: frontends own their styling. Still served so existing frontends keep working."
+          },
+          "transcript_corrections_enabled": {
+            "title": "Transcript Corrections Enabled",
+            "type": "boolean"
           }
         },
         "required": [
@@ -6838,8 +7080,10 @@
           "creator_name",
           "public_passages_enabled",
           "clip_exports_enabled",
+          "chat_replay_enabled",
           "atproto_enabled",
-          "community_enabled"
+          "community_enabled",
+          "transcript_corrections_enabled"
         ],
         "title": "SiteConfig",
         "type": "object"
@@ -7658,6 +7902,14 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "segments": {
             "description": "List of transcript segments in chronological order",
             "items": {
@@ -8351,6 +8603,14 @@
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
           },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "created_at": {
             "description": "Timestamp of formatting",
             "format": "date-time",
@@ -8531,6 +8791,14 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "segments": {
             "description": "Transcript segments with word timings",
             "items": {
@@ -8637,6 +8905,14 @@
               "$ref": "#/components/schemas/TranscriptBlockResponse"
             },
             "title": "Blocks",
+            "type": "array"
+          },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
             "type": "array"
           },
           "full_text": {
@@ -16632,6 +16908,94 @@
           }
         },
         "summary": "Get citation-backed video chapters",
+        "tags": [
+          "Videos"
+        ]
+      }
+    },
+    "/videos/{video_id}/chat": {
+      "get": {
+        "description": "Imported chat messages with `start_ms <= offset_ms < end_ms`, ordered by time. Returns at most `limit` messages; a truncated response gives `next_start_ms` to continue from. Returns 404 while chat replay is disabled.",
+        "operationId": "get_video_chat_videos__video_id__chat_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "start_ms",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 0,
+              "title": "Start Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "end_ms",
+            "required": true,
+            "schema": {
+              "maximum": 2147483647,
+              "minimum": 1,
+              "title": "End Ms",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 1000,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatRangeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Chat replay disabled, or video not found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get chat messages for a time range",
         "tags": [
           "Videos"
         ]

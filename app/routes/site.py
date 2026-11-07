@@ -51,8 +51,10 @@ class SiteConfig(BrandProfile):
     theme: BrandTheme = Field(default_factory=BrandTheme, description=_THEME_DEPRECATION)
     public_passages_enabled: bool
     clip_exports_enabled: bool
+    chat_replay_enabled: bool
     atproto_enabled: bool
     community_enabled: bool
+    transcript_corrections_enabled: bool
 
 
 @router.get("/site", response_model=SiteConfig)
@@ -65,6 +67,8 @@ def site_config():
         creator_name=settings.SITE_CREATOR_NAME,
         public_passages_enabled=settings.PUBLIC_PASSAGES_ENABLED,
         community_enabled=settings.COMMUNITY_ENABLED,
+        transcript_corrections_enabled=settings.TRANSCRIPT_CORRECTIONS_ENABLED,
         atproto_enabled=settings.ATPROTO_ENABLED,
         clip_exports_enabled=settings.CLIP_EXPORTS_ENABLED,
+        chat_replay_enabled=settings.CHAT_REPLAY_ENABLED,
     )

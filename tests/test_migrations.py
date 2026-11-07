@@ -548,6 +548,9 @@ def test_upgraded_and_fresh_schema_have_complete_user_fk_and_cleanup_inventory(a
         "archive_opinion_revisions",
         "video_speaker_people",
         "speaker_voice_references",
+        "chat_imports",
+        "chat_messages",
+        "segment_corrections",
     )
     command.upgrade(alembic_config, "head")
     with get_engine(test_db_url) as engine:
@@ -569,6 +572,8 @@ def test_upgraded_and_fresh_schema_have_complete_user_fk_and_cleanup_inventory(a
         ("oauth_requests", "link_user_id", "c"),
         ("sessions", "user_id", "c"),
         ("saved_searches", "user_id", "c"),
+        ("segment_corrections", "proposer_id", "n"),
+        ("segment_corrections", "reviewer_id", "n"),
         ("source_deletions", "deleted_by_user_id", "n"),
         ("source_deletions", "owner_user_id", "n"),
         ("speaker_voice_references", "created_by", "n"),

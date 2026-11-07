@@ -109,6 +109,8 @@ def test_default_raw_response_keeps_its_exact_shape(client, native_video):
         ],
         "source": "whisper",
         "source_label": "Whisper transcript",
+        # Transcript corrections (#62) always report corrected ranges; none here.
+        "corrections": [],
     }
 
 

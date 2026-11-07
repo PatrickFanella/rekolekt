@@ -1,0 +1,34 @@
+{
+  "FileInfo": {"Version": {"Major": 1, "Minor": 4, "Patch": 0}, "CreatedAt": "2026-11-07T20:00:00Z"},
+  "streamer": {"name": "examplestreamer", "id": 1000},
+  "video": {"title": "Synthetic broadcast", "id": "2000000000", "start": 0, "end": 400, "length": 400},
+  "comments": [
+    {
+      "_id": "c1",
+      "created_at": "2026-11-07T18:02:21.000Z",
+      "content_offset_seconds": 10,
+      "commenter": {"display_name": "ViewerOne", "_id": "1", "name": "viewerone"},
+      "message": {
+        "body": "hello chat Kappa",
+        "user_color": "#1E90FF",
+        "user_badges": [{"_id": "subscriber", "version": "12"}],
+        "fragments": [{"text": "hello chat ", "emoticon": null}, {"text": "Kappa", "emoticon": {"emoticon_id": "25"}}]
+      }
+    },
+    {
+      "_id": "c2",
+      "created_at": "2026-11-07T18:04:01.500Z",
+      "content_offset_seconds": 110.5,
+      "commenter": {"display_name": "", "_id": "2", "name": "lowercase_login"},
+      "message": {"body": "second message", "user_color": null, "user_badges": [], "fragments": []}
+    },
+    {
+      "_id": "c3",
+      "created_at": "2026-11-07T18:07:11.250Z",
+      "content_offset_seconds": 300.25,
+      "commenter": {"display_name": "ViewerThree", "_id": "3", "name": "viewerthree"},
+      "message": {"body": "late message", "user_color": "not-a-colour", "fragments": []}
+    }
+  ],
+  "embeddedData": null
+}

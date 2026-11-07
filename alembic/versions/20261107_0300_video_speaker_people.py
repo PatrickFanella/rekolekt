@@ -19,7 +19,7 @@ as its owner so the least-privilege diarization role needs no new grants.
 from alembic import op
 
 revision = "20261107_speaker_people"
-down_revision = "20261107_speaker_centroids"
+down_revision = "20261107_segment_corrections"
 branch_labels = None
 depends_on = None
 
