@@ -9,12 +9,13 @@ from threading import Thread
 from prometheus_client import start_http_server
 from sqlalchemy import create_engine, text
 
+from app.channel_sync_rules import load_sync_channels
 from app.logging_config import configure_logging, get_logger, video_id_ctx
 from app.settings import settings, validate_worker_production_settings
 from app.source_deletion import reconcile_pending_source_deletions
 from app.ytdlp_validation import validate_js_runtime_or_exit
 from worker.caption_ingest import ingest_available_captions
-from worker.channel_sync import ChannelSyncScheduler, parse_channel_urls, sync_configured_channels
+from worker.channel_sync import ChannelSyncScheduler, sync_configured_channels
 from worker.job_lifecycle import claim_job_attempt, finish_job_attempt, maintain_job_lease
 from worker.maintenance import requeue_for_model_upgrade, rescue_stuck_videos
 from worker.metrics import setup_worker_info, try_collect_gpu_metrics
@@ -53,17 +54,17 @@ WORKER_ID = f"{socket.gethostname()}-{os.getpid()}"
 
 
 worker_lifecycle = WorkerLifecycle()
-channel_sync_urls = parse_channel_urls(settings.CHANNEL_SYNC_URLS)
+channel_sync_channels = load_sync_channels(settings.CHANNEL_SYNC_URLS, settings.CHANNEL_SYNC_CONFIG)
 
 
 def _sync_channels() -> None:
     with engine.begin() as conn:
-        sync_configured_channels(conn, channel_sync_urls)
+        sync_configured_channels(conn, channel_sync_channels)
 
 
 channel_sync_scheduler = (
     ChannelSyncScheduler(interval_seconds=settings.CHANNEL_SYNC_INTERVAL_SECONDS, sync=_sync_channels)
-    if channel_sync_urls
+    if channel_sync_channels
     else None
 )
 
