@@ -16,6 +16,7 @@ from app.archive.intelligence_facets import attach_archive_facets
 from app.archive.query_support import execute as _safe_execute
 from app.archive.query_support import execute_many as _safe_execute_many
 from app.archive.query_support import query_mappings as _safe_mappings
+from app.archive.query_support import query_stream as _safe_stream
 from app.archive.repository import ARCHIVE_VIDEO_FILTER_SQL, archive_repository
 from app.archive.video_metadata_repository import get_video_metadata_map
 from app.exceptions import ValidationError
@@ -1964,40 +1965,30 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
         alias_clauses.append(f"LOWER(snippet) LIKE :{key}")
         params[key] = f"%{alias}%"
     alias_filter_sql = " OR ".join(alias_clauses) or "FALSE"
-    limit_sql = ""
+    # A full scan matches over a million lines. Select only what a mention
+    # keeps and stream the rows, or the refresher runs out of memory. Only the
+    # partial (quick) scan needs the newest lines first.
+    order_sql = ""
     if segment_limit is not None:
-        limit_sql = "LIMIT :segment_limit"
+        order_sql = """ORDER BY COALESCE(broadcast_date::timestamp AT TIME ZONE 'UTC', created_at) DESC NULLS LAST,
+                 transcript_source_priority ASC, start_ms ASC
+        LIMIT :segment_limit"""
         params["segment_limit"] = segment_limit
 
-    segment_rows = []
+    segment_rows: Iterable[dict] = []
     if alias_terms:
-        segment_rows = _safe_mappings(
+        segment_rows = _safe_stream(
             db,
             f"""
-        SELECT * FROM (
+        SELECT segment_id, video_id, start_ms, end_ms, snippet, broadcast_date FROM (
             SELECT
                 s.id AS segment_id,
                 s.video_id,
                 s.start_ms,
                 s.end_ms,
                 s.text AS snippet,
-                v.youtube_id,
-                v.title,
-                v.duration_seconds,
-                v.state,
-                v.caption_ingest_state,
-                v.diarization_state,
-                v.uploaded_at,
                 v.broadcast_date,
-                v.broadcast_date_source,
-                v.broadcast_kind,
                 v.created_at,
-                v.updated_at,
-                v.channel_name,
-                v.language,
-                v.category,
-                EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
-                EXISTS (SELECT 1 FROM youtube_transcripts yt2 WHERE yt2.video_id = v.id) AS has_youtube_transcript,
                 0 AS transcript_source_priority
             FROM segments s
             JOIN videos v ON v.id = s.video_id
@@ -2011,23 +2002,8 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
                 ys.start_ms,
                 ys.end_ms,
                 ys.text AS snippet,
-                v.youtube_id,
-                v.title,
-                v.duration_seconds,
-                v.state,
-                v.caption_ingest_state,
-                v.diarization_state,
-                v.uploaded_at,
                 v.broadcast_date,
-                v.broadcast_date_source,
-                v.broadcast_kind,
                 v.created_at,
-                v.updated_at,
-                v.channel_name,
-                v.language,
-                v.category,
-                EXISTS (SELECT 1 FROM segments s2 WHERE s2.video_id = v.id) AS has_whisper_transcript,
-                TRUE AS has_youtube_transcript,
                 1 AS transcript_source_priority
             FROM youtube_segments ys
             JOIN youtube_transcripts yt ON yt.id = ys.youtube_transcript_id
@@ -2035,8 +2011,7 @@ def refresh_topic_mentions(db, topic_slug: str | None = None, segment_limit: int
             WHERE ({ARCHIVE_VIDEO_FILTER_SQL})
         ) transcript_segments
         WHERE {alias_filter_sql}
-        ORDER BY COALESCE(broadcast_date::timestamp AT TIME ZONE 'UTC', created_at) DESC NULLS LAST, transcript_source_priority ASC, start_ms ASC
-        {limit_sql}
+        {order_sql}
         """,
             params,
         )

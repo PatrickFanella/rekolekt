@@ -32,6 +32,14 @@ def query_mappings(db, sql: str, params: dict | None = None):
         return _unavailable(db, "query_many", exc)
 
 
+def query_stream(db, sql: str, params: dict | None = None, batch_size: int = 5000):
+    """Yield rows in batches from a server-side cursor instead of loading them all."""
+    try:
+        yield from db.execute(text(sql).execution_options(yield_per=batch_size), params or {}).mappings()
+    except (OperationalError, ProgrammingError) as exc:
+        _unavailable(db, "query_stream", exc)
+
+
 def query_scalar(db, sql: str, params: dict | None = None):
     try:
         return db.execute(text(sql), params or {}).scalar_one()
