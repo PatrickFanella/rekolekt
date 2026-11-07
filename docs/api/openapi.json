@@ -7319,6 +7319,49 @@
         "title": "TranscriptResponse",
         "type": "object"
       },
+      "TranscriptWord": {
+        "description": "One Whisper word timing inside a transcript segment.",
+        "properties": {
+          "end_ms": {
+            "description": "Word end in milliseconds, within the segment",
+            "minimum": 0.0,
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "probability": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Whisper word probability (0-1), when stored",
+            "title": "Probability"
+          },
+          "start_ms": {
+            "description": "Word start in milliseconds, within the segment",
+            "minimum": 0.0,
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "description": "Word text as Whisper produced it, trimmed",
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "title": "TranscriptWord",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -7826,6 +7869,258 @@
           "replacement"
         ],
         "title": "VocabularyTerm",
+        "type": "object"
+      },
+      "WordTimedFormattedTranscriptResponse": {
+        "description": "Formatted transcript whose raw segments carry word timings, returned for `include=words`.",
+        "properties": {
+          "blocks": {
+            "description": "Formatted transcript blocks",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptBlockResponse"
+            },
+            "title": "Blocks",
+            "type": "array"
+          },
+          "cleanup_config": {
+            "$ref": "#/components/schemas/CleanupConfig",
+            "description": "Cleanup configuration used"
+          },
+          "created_at": {
+            "description": "Timestamp of formatting",
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "format": {
+            "description": "Formatting style used",
+            "enum": [
+              "inline",
+              "dialogue",
+              "structured"
+            ],
+            "title": "Format",
+            "type": "string"
+          },
+          "segments": {
+            "description": "Raw transcript segments with word timings",
+            "items": {
+              "$ref": "#/components/schemas/WordTimedSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "source": {
+            "default": "whisper",
+            "description": "Transcript source used for this response",
+            "enum": [
+              "whisper",
+              "youtube",
+              "merged"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_label": {
+            "default": "Whisper transcript",
+            "description": "Human-readable transcript source label",
+            "title": "Source Label",
+            "type": "string"
+          },
+          "text": {
+            "description": "Formatted transcript text",
+            "title": "Text",
+            "type": "string"
+          },
+          "video_id": {
+            "description": "Unique identifier for the video",
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          },
+          "word_timings": {
+            "description": "available: every segment has words; partial: some segments have words: null; unavailable: no segment has words",
+            "enum": [
+              "available",
+              "partial",
+              "unavailable"
+            ],
+            "title": "Word Timings",
+            "type": "string"
+          },
+          "word_timings_note": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_stored",
+                  "word_limit_reached",
+                  "youtube_captions",
+                  "merged_transcript"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why segments lack words: not_stored (no stored or usable timings, e.g. fast preset, older rows, malformed data), word_limit_reached (response limit of 100,000 words), youtube_captions or merged_transcript",
+            "title": "Word Timings Note"
+          }
+        },
+        "required": [
+          "video_id",
+          "segments",
+          "text",
+          "format",
+          "cleanup_config",
+          "word_timings"
+        ],
+        "title": "WordTimedFormattedTranscriptResponse",
+        "type": "object"
+      },
+      "WordTimedSegment": {
+        "description": "A transcript segment with its word timings, returned for `include=words`.",
+        "example": {
+          "end_ms": 3500,
+          "speaker_label": "Speaker 1",
+          "start_ms": 1000,
+          "text": "Hello and welcome to this video"
+        },
+        "properties": {
+          "end_ms": {
+            "description": "End time in milliseconds",
+            "minimum": 0.0,
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "speaker_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Speaker label from diarization (e.g., 'Speaker 1')",
+            "title": "Speaker Label"
+          },
+          "start_ms": {
+            "description": "Start time in milliseconds",
+            "minimum": 0.0,
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "description": "Transcribed text content",
+            "title": "Text",
+            "type": "string"
+          },
+          "words": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TranscriptWord"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Word timings in stored order, or null when this segment has no usable word timings",
+            "title": "Words"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "text",
+          "words"
+        ],
+        "title": "WordTimedSegment",
+        "type": "object"
+      },
+      "WordTimedTranscriptResponse": {
+        "description": "Raw transcript with word timings, returned for `include=words`.",
+        "example": {
+          "segments": [
+            {
+              "end_ms": 3500,
+              "speaker_label": "Speaker 1",
+              "start_ms": 1000,
+              "text": "Hello and welcome to this video"
+            }
+          ],
+          "video_id": "123e4567-e89b-12d3-a456-426614174000"
+        },
+        "properties": {
+          "segments": {
+            "description": "Transcript segments with word timings",
+            "items": {
+              "$ref": "#/components/schemas/WordTimedSegment"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "source": {
+            "default": "whisper",
+            "description": "Transcript source used for this response",
+            "enum": [
+              "whisper",
+              "youtube",
+              "merged"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "source_label": {
+            "default": "Whisper transcript",
+            "description": "Human-readable transcript source label",
+            "title": "Source Label",
+            "type": "string"
+          },
+          "video_id": {
+            "description": "Unique identifier for the video",
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          },
+          "word_timings": {
+            "description": "available: every segment has words; partial: some segments have words: null; unavailable: no segment has words",
+            "enum": [
+              "available",
+              "partial",
+              "unavailable"
+            ],
+            "title": "Word Timings",
+            "type": "string"
+          },
+          "word_timings_note": {
+            "anyOf": [
+              {
+                "enum": [
+                  "not_stored",
+                  "word_limit_reached",
+                  "youtube_captions",
+                  "merged_transcript"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Why segments lack words: not_stored (no stored or usable timings, e.g. fast preset, older rows, malformed data), word_limit_reached (response limit of 100,000 words), youtube_captions or merged_transcript",
+            "title": "Word Timings Note"
+          }
+        },
+        "required": [
+          "video_id",
+          "segments",
+          "word_timings"
+        ],
+        "title": "WordTimedTranscriptResponse",
         "type": "object"
       },
       "YTSegment": {
@@ -15665,7 +15960,7 @@
     },
     "/videos/{video_id}/transcript": {
       "get": {
-        "description": "Retrieve the Whisper-generated transcript for a video with optional speaker diarization.\n\n    This endpoint returns the transcript generated by our Whisper pipeline, which includes\n    speaker labels if diarization was successful.\n\n    **Transcript Generation:**\n    - Audio is transcribed using Whisper (faster-whisper or openai-whisper backend)\n    - Optional speaker diarization using pyannote.audio\n    - Segments are ordered chronologically by start time\n\n    **Modes:**\n    - `raw` (default): Returns raw Whisper-generated segments without any processing\n    - `cleaned`: Returns segments with cleanup applied (filler removal, normalization, punctuation)\n    - `formatted`: Returns fully formatted text with speaker labels and paragraph structure\n\n    **Note:** Responses are cached per mode. ETags reflect the mode to avoid stale caches.",
+        "description": "Retrieve the Whisper-generated transcript for a video with optional speaker diarization.\n\n    This endpoint returns the transcript generated by our Whisper pipeline, which includes\n    speaker labels if diarization was successful.\n\n    **Transcript Generation:**\n    - Audio is transcribed using Whisper (faster-whisper or openai-whisper backend)\n    - Optional speaker diarization using pyannote.audio\n    - Segments are ordered chronologically by start time\n\n    **Modes:**\n    - `raw` (default): Returns raw Whisper-generated segments without any processing\n    - `cleaned`: Returns segments with cleanup applied (filler removal, normalization, punctuation)\n    - `formatted`: Returns fully formatted text with speaker labels and paragraph structure\n\n    **Word timings:** `include=words` adds a `words` list to each raw segment in `raw` and\n    `formatted` modes, plus `word_timings` (`available`, `partial` or `unavailable`) and\n    `word_timings_note`. A segment without usable stored timings has `words: null`. YouTube\n    captions and merged transcripts have no word timings. A response carries at most 100,000\n    words; later segments get `words: null` and the note `word_limit_reached`.\n    `mode=cleaned` does not support `include=words`.\n\n    **Note:** Responses are cached per mode. ETags reflect the mode to avoid stale caches.",
         "operationId": "get_transcript_videos__video_id__transcript_get",
         "parameters": [
           {
@@ -15712,6 +16007,25 @@
               "title": "Source",
               "type": "string"
             }
+          },
+          {
+            "description": "Set to `words` to add stored Whisper word timings to raw segments (raw and formatted modes)",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "words",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set to `words` to add stored Whisper word timings to raw segments (raw and formatted modes)",
+              "title": "Include"
+            }
           }
         ],
         "responses": {
@@ -15728,6 +16042,12 @@
                     },
                     {
                       "$ref": "#/components/schemas/FormattedTranscriptResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WordTimedTranscriptResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WordTimedFormattedTranscriptResponse"
                     }
                   ],
                   "title": "Response Get Transcript Videos  Video Id  Transcript Get"
@@ -15782,7 +16102,7 @@
     },
     "/videos/{video_id}/transcript.json": {
       "get": {
-        "description": "Download Whisper-generated transcript in JSON format with full segment data.\n\n    **Authentication Required:** Yes",
+        "description": "Download Whisper-generated transcript in JSON format with full segment data.\n\n    `include=words` adds each Whisper segment's word timings (`words`, null when none are\n    stored) and the top-level `word_timings` and `word_timings_note` fields, with the same\n    rules and 100,000-word limit as `GET /videos/{video_id}/transcript`. YouTube and merged\n    exports report `word_timings: \"unavailable\"`.\n\n    **Authentication Required:** Yes",
         "operationId": "get_native_transcript_json_videos__video_id__transcript_json_get",
         "parameters": [
           {
@@ -15793,6 +16113,25 @@
               "format": "uuid",
               "title": "Video Id",
               "type": "string"
+            }
+          },
+          {
+            "description": "Set to `words` to add Whisper word timings",
+            "in": "query",
+            "name": "include",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "const": "words",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Set to `words` to add Whisper word timings",
+              "title": "Include"
             }
           }
         ],

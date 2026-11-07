@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 
+from app.transcripts.words import MAX_WORDS_PER_RESPONSE, WordTimingsNote
+
 
 class OffsetPageInfo(BaseModel):
     limit: int = Field(..., ge=1, description="Requested page size")
@@ -160,6 +162,33 @@ class Segment(BaseModel):
     }
 
 
+class TranscriptWord(BaseModel):
+    """One Whisper word timing inside a transcript segment."""
+
+    start_ms: int = Field(..., description="Word start in milliseconds, within the segment", ge=0)
+    end_ms: int = Field(..., description="Word end in milliseconds, within the segment", ge=0)
+    text: str = Field(..., description="Word text as Whisper produced it, trimmed")
+    probability: Optional[float] = Field(None, description="Whisper word probability (0-1), when stored", ge=0, le=1)
+
+
+class WordTimedSegment(Segment):
+    """A transcript segment with its word timings, returned for `include=words`."""
+
+    words: Optional[List[TranscriptWord]] = Field(
+        ..., description="Word timings in stored order, or null when this segment has no usable word timings"
+    )
+
+
+WORD_TIMINGS_DESCRIPTION = (
+    "available: every segment has words; partial: some segments have words: null; unavailable: no segment has words"
+)
+WORD_TIMINGS_NOTE_DESCRIPTION = (
+    "Why segments lack words: not_stored (no stored or usable timings, e.g. fast preset, older rows, "
+    f"malformed data), word_limit_reached (response limit of {MAX_WORDS_PER_RESPONSE:,} words), "
+    "youtube_captions or merged_transcript"
+)
+
+
 class TranscriptResponse(BaseModel):
     """Complete transcript for a video with all segments."""
 
@@ -185,6 +214,14 @@ class TranscriptResponse(BaseModel):
             }
         }
     }
+
+
+class WordTimedTranscriptResponse(TranscriptResponse):
+    """Raw transcript with word timings, returned for `include=words`."""
+
+    segments: List[WordTimedSegment] = Field(..., description="Transcript segments with word timings")  # type: ignore[assignment]
+    word_timings: Literal["available", "partial", "unavailable"] = Field(..., description=WORD_TIMINGS_DESCRIPTION)
+    word_timings_note: Optional[WordTimingsNote] = Field(None, description=WORD_TIMINGS_NOTE_DESCRIPTION)
 
 
 class YTSegment(BaseModel):
@@ -1331,3 +1368,11 @@ class FormattedTranscriptResponse(BaseModel):
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of formatting"
     )
+
+
+class WordTimedFormattedTranscriptResponse(FormattedTranscriptResponse):
+    """Formatted transcript whose raw segments carry word timings, returned for `include=words`."""
+
+    segments: List[WordTimedSegment] = Field(..., description="Raw transcript segments with word timings")  # type: ignore[assignment]
+    word_timings: Literal["available", "partial", "unavailable"] = Field(..., description=WORD_TIMINGS_DESCRIPTION)
+    word_timings_note: Optional[WordTimingsNote] = Field(None, description=WORD_TIMINGS_NOTE_DESCRIPTION)
