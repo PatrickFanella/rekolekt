@@ -1,4 +1,9 @@
+import gc
+import math
 import os
+import wave
+from dataclasses import dataclass
+from pathlib import Path
 
 from app.logging_config import get_logger
 from app.settings import settings
@@ -160,3 +165,199 @@ def diarize_and_align(wav_path, whisper_segments):
     except Exception as e:
         logger.warning("Diarization failed; returning Whisper segments as-is", extra={"error": str(e)})
         return whisper_segments
+
+
+@dataclass(frozen=True)
+class WindowDiarization:
+    """One diarized window: tracks in recording time and one embedding per local label."""
+
+    tracks: list[tuple[float, float, str]]
+    embeddings: dict[str, list[float] | None]
+
+
+@dataclass(frozen=True)
+class RecordingDiarization:
+    """Speaker tracks for a whole recording with labels consistent across windows.
+
+    Labels are ``Speaker N`` in order of first appearance. ``centroids`` holds a
+    unit-length speaker embedding for each label that had a usable one, and
+    ``speech_seconds`` the total speaking time per label.
+    """
+
+    tracks: list[tuple[float, float, str]]
+    centroids: dict[str, list[float]]
+    speech_seconds: dict[str, float]
+
+
+def _unit(vector) -> list[float] | None:
+    if vector is None:
+        return None
+    values = [float(v) for v in vector]
+    norm = math.sqrt(sum(v * v for v in values))
+    if not values or not math.isfinite(norm) or norm == 0.0:
+        return None
+    return [v / norm for v in values]
+
+
+def _dot(a: list[float], b: list[float]) -> float:
+    return sum(x * y for x, y in zip(a, b, strict=True))
+
+
+def link_window_speakers(windows: list[WindowDiarization], threshold: float) -> RecordingDiarization:
+    """Link each window's local speakers to recording speakers by cosine similarity.
+
+    Within a window, local speakers are matched one-to-one to recording speakers,
+    best similarity first, when the similarity reaches ``threshold``. A local
+    speaker without a match, or without a usable embedding, starts a new
+    recording speaker. Recording centroids are speech-time-weighted means of the
+    matched window embeddings.
+    """
+    sums: list[list[float] | None] = []
+    seconds: list[float] = []
+    first_start: list[float] = []
+    tracks: list[tuple[float, float, int]] = []
+
+    def centroid(index: int) -> list[float] | None:
+        total = sums[index]
+        return _unit(total) if total is not None else None
+
+    for window in windows:
+        local_seconds: dict[str, float] = {}
+        local_first: dict[str, float] = {}
+        for start, end, label in window.tracks:
+            local_seconds[label] = local_seconds.get(label, 0.0) + max(0.0, end - start)
+            local_first[label] = min(local_first.get(label, start), start)
+        local_vectors = {label: _unit(window.embeddings.get(label)) for label in local_seconds}
+
+        candidates = []
+        for label, vector in local_vectors.items():
+            if vector is None:
+                continue
+            for index in range(len(sums)):
+                known = centroid(index)
+                if known is None or len(known) != len(vector):
+                    continue
+                similarity = _dot(vector, known)
+                if similarity >= threshold:
+                    candidates.append((similarity, label, index))
+        assignment: dict[str, int] = {}
+        taken: set[int] = set()
+        for _similarity, label, index in sorted(candidates, key=lambda c: (-c[0], c[1], c[2])):
+            if label in assignment or index in taken:
+                continue
+            assignment[label] = index
+            taken.add(index)
+
+        for label in sorted(local_seconds, key=lambda name: (local_first[name], name)):
+            vector = local_vectors[label]
+            if label not in assignment:
+                sums.append(None)
+                seconds.append(0.0)
+                first_start.append(local_first[label])
+                assignment[label] = len(sums) - 1
+            index = assignment[label]
+            weight = local_seconds[label]
+            if vector is not None and weight > 0:
+                current = sums[index]
+                weighted = [weight * v for v in vector]
+                sums[index] = weighted if current is None else [a + b for a, b in zip(current, weighted, strict=True)]
+            seconds[index] += weight
+            first_start[index] = min(first_start[index], local_first[label])
+        tracks.extend((start, end, assignment[label]) for start, end, label in window.tracks)
+
+    order = sorted(range(len(sums)), key=lambda index: (first_start[index], index))
+    names = {index: f"Speaker {position + 1}" for position, index in enumerate(order)}
+    centroids = {}
+    for index, name in names.items():
+        vector = centroid(index)
+        if vector is not None:
+            centroids[name] = vector
+    return RecordingDiarization(
+        tracks=sorted(((start, end, names[index]) for start, end, index in tracks), key=lambda t: (t[0], t[1], t[2])),
+        centroids=centroids,
+        speech_seconds={names[index]: seconds[index] for index in order},
+    )
+
+
+def _wav_frame_info(wav_path: Path) -> tuple[int, int]:
+    with wave.open(str(wav_path), "rb") as reader:
+        if reader.getsampwidth() != 2:
+            raise ValueError("diarization expects 16-bit PCM WAV audio")
+        return reader.getnframes(), reader.getframerate()
+
+
+def _read_window(wav_path: Path, start_frame: int, frame_count: int):
+    """Read one window of a 16-bit PCM WAV as mono float32, bounded by the window."""
+    import numpy as np
+
+    with wave.open(str(wav_path), "rb") as reader:
+        channels = reader.getnchannels()
+        sample_rate = reader.getframerate()
+        reader.setpos(start_frame)
+        raw = reader.readframes(frame_count)
+    samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768.0
+    if channels > 1:
+        samples = samples.reshape(-1, channels).mean(axis=1)
+    return np.ascontiguousarray(samples), sample_rate
+
+
+def _pipeline_input(samples, sample_rate: int) -> dict:
+    import torch
+
+    return {"waveform": torch.from_numpy(samples).unsqueeze(0), "sample_rate": sample_rate}
+
+
+def _diarize_window(pipe, audio: dict, offset_seconds: float) -> WindowDiarization:
+    output = pipe(audio)
+    diar = output if callable(getattr(output, "itertracks", None)) else output.speaker_diarization
+    tracks = [
+        (offset_seconds + float(seg.start), offset_seconds + float(seg.end), str(label))
+        for seg, _track, label in diar.itertracks(yield_label=True)
+    ]
+    raw_embeddings = getattr(output, "speaker_embeddings", None)
+    labels = [str(label) for label in diar.labels()] if callable(getattr(diar, "labels", None)) else []
+    embeddings: dict[str, list[float] | None] = {label: None for _s, _e, label in tracks}
+    if raw_embeddings is not None:
+        for position, label in enumerate(labels):
+            if position < len(raw_embeddings):
+                embeddings[label] = [float(v) for v in raw_embeddings[position]]
+    return WindowDiarization(tracks=tracks, embeddings=embeddings)
+
+
+def diarize_recording(wav_path) -> RecordingDiarization:
+    """Diarize a whole recording in bounded windows with consistent speaker labels.
+
+    Each window of ``DIARIZATION_CHUNK_SECONDS`` is read and diarized on its own,
+    so memory depends on the window length rather than the recording length.
+    Window speakers are linked by pyannote's per-speaker embeddings. Errors are
+    raised so the caller can record a visible failure.
+    """
+    pipe = _get_pipeline()
+    if pipe is None:
+        raise RuntimeError("Diarization pipeline not available")
+    wav_path = Path(wav_path)
+    total_frames, sample_rate = _wav_frame_info(wav_path)
+    chunk_seconds = int(settings.DIARIZATION_CHUNK_SECONDS)
+    window_frames = total_frames if chunk_seconds <= 0 else chunk_seconds * sample_rate
+    window_frames = max(1, window_frames)
+    windows: list[WindowDiarization] = []
+    start_frame = 0
+    while start_frame < total_frames:
+        frame_count = min(window_frames, total_frames - start_frame)
+        logger.info(
+            "Diarizing window",
+            extra={"start_seconds": start_frame / sample_rate, "seconds": frame_count / sample_rate},
+        )
+        samples, rate = _read_window(wav_path, start_frame, frame_count)
+        windows.append(_diarize_window(pipe, _pipeline_input(samples, rate), start_frame / sample_rate))
+        del samples
+        gc.collect()
+        start_frame += frame_count
+    if len(windows) > 1 and all(_unit(vector) is None for window in windows for vector in window.embeddings.values()):
+        raise RuntimeError("chunked diarization requires pyannote speaker embeddings to link windows")
+    result = link_window_speakers(windows, float(settings.DIARIZATION_LINK_THRESHOLD))
+    logger.info(
+        "Diarized recording",
+        extra={"windows": len(windows), "speakers": len(result.speech_seconds), "tracks": len(result.tracks)},
+    )
+    return result

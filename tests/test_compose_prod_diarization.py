@@ -120,3 +120,63 @@ def test_sourceable_helper_does_not_capture_locals_in_traps() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     assert "trap on_canary_exit EXIT" in source
     assert "trap 'on_canary_signal 130' INT" in source
+
+
+def test_backlog_run_checks_the_role_and_passes_bounded_settings(tmp_path: Path) -> None:
+    log = tmp_path / "calls"
+    code = f"""
+source {SCRIPT}
+run_preflight() {{ printf 'preflight\\n' >> "{log}"; }}
+check_diarization_role() {{ printf 'role-check\\n' >> "{log}"; }}
+compose() {{ printf 'compose %s\\n' "$*" >> "{log}"; }}
+run_diarization_backlog 7
+"""
+    result = subprocess.run(
+        ["bash", "-c", code],
+        cwd=ROOT,
+        env={"PATH": "/usr/bin:/bin", "HOME": os.environ.get("HOME", ""), "TRANSCRIPT_DEPLOY_ROOT": str(tmp_path)},
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    calls = log.read_text(encoding="utf-8")
+    assert result.returncode == 0, result.stderr
+    assert calls.index("preflight") < calls.index("role-check") < calls.index("compose")
+    run = calls.splitlines()[-1]
+    for expected in (
+        "--profile diarization run --rm --no-deps",
+        "DIARIZATION_BACKLOG_MODE=true",
+        "DIARIZATION_BACKLOG_BATCH_SIZE=7",
+        "DIARIZATION_MAX_JOBS_PER_PROCESS=7",
+        "DIARIZATION_ALLOWED_VIDEO_IDS= ",
+        "DIARIZATION_CANARY_MODE=false",
+        "DIARIZATION_CHUNK_SECONDS=600",
+        "DIARIZATION_REFETCH_AUDIO=true",
+        "DIARIZATION_STRICT=true",
+        "DIARIZATION_DEVICE=cpu",
+    ):
+        assert expected in run
+    assert run.endswith("diarization-worker")
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("diarization-backlog", "0", "--approved"),
+        ("diarization-backlog", "21", "--approved"),
+        ("diarization-backlog", "5"),
+        ("diarization-backlog", "5", "approved"),
+        ("diarization-backlog", "05", "--approved"),
+    ],
+)
+def test_backlog_maintenance_rejects_unbounded_or_unapproved_requests(tmp_path: Path, arguments) -> None:
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "maintenance", *arguments],
+        cwd=ROOT,
+        env={**os.environ, "TRANSCRIPT_DEPLOY_ROOT": str(tmp_path)},
+        text=True,
+        capture_output=True,
+        timeout=15,
+    )
+    assert result.returncode == 64
+    assert "diarization-backlog requires a batch size 1..20 and --approved" in result.stderr

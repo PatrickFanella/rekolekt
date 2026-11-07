@@ -300,6 +300,22 @@ class Settings(BaseSettings):
     # Strict mode is used by the production one-off worker: no fallback, download,
     # decode, or device-placement failure may be hidden.
     DIARIZATION_STRICT: bool = False
+    # Long recordings are diarized in windows of this many seconds, then each
+    # window's speakers are linked to the recording's speakers by embedding.
+    # 600 s is the window size verified under the production memory limit.
+    # 0 diarizes the whole file in one call.
+    DIARIZATION_CHUNK_SECONDS: int = Field(default=600, ge=0, le=7200)
+    # Minimum cosine similarity for linking a window's speaker to a speaker
+    # already heard earlier in the same recording.
+    DIARIZATION_LINK_THRESHOLD: float = Field(default=0.5, ge=0.0, le=1.0)
+    # When the transcription WAV is gone, download and transcode the audio again
+    # into a scratch directory, then delete it after the job.
+    DIARIZATION_REFETCH_AUDIO: bool = False
+    DIARIZATION_REFETCH_DIR: str = "/tmp/diarization-audio"  # nosec B108 - per-video scratch, removed after use
+    # Backlog mode selects its own bounded batch of eligible videos instead of an
+    # explicit allow-list, processes at most that many, then exits.
+    DIARIZATION_BACKLOG_MODE: bool = False
+    DIARIZATION_BACKLOG_BATCH_SIZE: int = Field(default=10, ge=1, le=100)
     # Custom vocabulary post-processing
     ENABLE_CUSTOM_VOCABULARY: bool = True  # Apply custom vocabulary corrections
     # Translation support
