@@ -546,6 +546,8 @@ def test_upgraded_and_fresh_schema_have_complete_user_fk_and_cleanup_inventory(a
         "archive_chapter_feedback",
         "archive_label_feedback",
         "archive_opinion_revisions",
+        "chat_imports",
+        "chat_messages",
     )
     command.upgrade(alembic_config, "head")
     with get_engine(test_db_url) as engine:

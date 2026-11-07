@@ -162,6 +162,8 @@ class Settings(BaseSettings):
     SITE_CREATOR_NAME: str = Field(default="the creators", min_length=1, max_length=100)
     COMMUNITY_ENABLED: bool = False
     CLIP_EXPORTS_ENABLED: bool = False
+    # Serve imported chat logs at GET /videos/{video_id}/chat.
+    CHAT_REPLAY_ENABLED: bool = False
     CLIP_ORIGINALS_ROOT: str = ""
     CLIP_SPOOL_DIR: str = ""
     CLIP_EXPORT_SOURCE: Literal["original", "youtube"] = "original"

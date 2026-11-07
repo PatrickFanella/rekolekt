@@ -30,6 +30,7 @@ def test_site_config_is_explicit_public_allowlist(monkeypatch):
         "community_enabled",
         "atproto_enabled",
         "clip_exports_enabled",
+        "chat_replay_enabled",
         "public_passages_enabled",
     }
 
