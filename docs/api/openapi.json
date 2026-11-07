@@ -12619,6 +12619,26 @@
         ]
       }
     },
+    "/feeds/recordings.rss": {
+      "get": {
+        "operationId": "get_recordings_feed_feeds_recordings_rss_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/rss+xml": {}
+            },
+            "description": "RSS 2.0 feed without enclosures"
+          },
+          "404": {
+            "description": "Feature disabled"
+          }
+        },
+        "summary": "RSS 2.0 feed of completed recordings with Podcasting 2.0 transcript and chapter links",
+        "tags": [
+          "Podcast"
+        ]
+      }
+    },
     "/health": {
       "get": {
         "description": "Simple endpoint that returns 200 OK if the service is running. Used by load balancers.",
@@ -15341,6 +15361,48 @@
         "summary": "Get citation-backed video chapters",
         "tags": [
           "Videos"
+        ]
+      }
+    },
+    "/videos/{video_id}/podcast-chapters.json": {
+      "get": {
+        "operationId": "get_podcast_chapters_videos__video_id__podcast_chapters_json_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json+chapters": {}
+            },
+            "description": "JSON chapters document, version 1.2.0"
+          },
+          "404": {
+            "description": "Feature disabled, recording missing, or no published chapters"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get published chapters in the Podcasting 2.0 JSON chapters format",
+        "tags": [
+          "Podcast"
         ]
       }
     },
