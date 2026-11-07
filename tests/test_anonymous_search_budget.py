@@ -160,6 +160,23 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(self.search.call_count, 2)
         self.assertEqual(self.redis.setex.call_count, 2)
 
+    def test_topic_warm_up_also_warms_linked_related_topics(self):
+        def mention_map(db, q, **_params):
+            related = {"epstein": ["trump", "files"], "trump": ["epstein", "files"]}.get(q, [])
+            return MentionMap(query=q, total_moments=1, total_videos=1, related_topics=related)
+
+        self.search.side_effect = mention_map
+        db = corpus()
+        db.execute.return_value.scalars.return_value.all.return_value = ["epstein", "trump"]
+
+        self.assertEqual(result_cache.warm_topic_mention_maps(db), 3)
+
+        warmed = [call.kwargs["q"] for call in self.search.call_args_list]
+        self.assertEqual(warmed, ["epstein", "trump", "files"])
+        ttls = {call.args[1] for call in self.redis.setex.call_args_list}
+        self.assertEqual(ttls, {result_cache.WARMED_TTL_SECONDS})
+        self.assertGreater(result_cache.WARMED_TTL_SECONDS, 6 * 3600)
+
     def test_topic_warm_up_skips_without_a_cache(self):
         self.redis.get.return_value = None
         with patch.object(result_cache, "get_redis_client", return_value=None):

@@ -162,6 +162,9 @@ class _FakeResult:
     def all(self):
         return self._rows
 
+    def __iter__(self):
+        return iter(self._rows)
+
     def one(self):
         return self._first
 
@@ -790,6 +793,28 @@ def test_refresh_topic_mentions_partial_scan_never_deletes_staged_absences():
 
     assert refresh_topic_mentions(db, segment_limit=100) == {"topics": 1, "mentions": 0}
     assert not any("DELETE FROM archive_topic_mentions m" in sql for sql, _ in db.calls)
+
+
+def test_refresh_topic_mentions_streams_full_scans_unordered():
+    topic_id = uuid.uuid4()
+    statements = []
+
+    class _StreamDb(_FakeDb):
+        def execute(self, sql, params=None):
+            self.calls.append((str(sql), params))
+            if "FROM archive_topics t" in str(sql):
+                return _FakeResult(rows=[{"id": topic_id, "slug": "gaza", "aliases": [{"alias": "gaza", "weight": 1}]}])
+            if "transcript_segments" in str(sql):
+                statements.append(sql)
+            return _FakeResult()
+
+    refresh_topic_mentions(_StreamDb([]))
+    refresh_topic_mentions(_StreamDb([]), segment_limit=100)
+
+    full, partial = statements
+    assert full.get_execution_options()["yield_per"] > 0
+    assert "ORDER BY" not in str(full) and "has_whisper_transcript" not in str(full)
+    assert "ORDER BY" in str(partial) and "LIMIT :segment_limit" in str(partial)
 
 
 def test_refresh_topic_period_stats_dates_mentions_by_broadcast_date():

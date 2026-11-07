@@ -2,8 +2,8 @@
 
 Keys include a corpus version, so a new transcript or video edit invalidates
 earlier results at once and the TTL only bounds metadata drift (tags, people).
-The archive intelligence refresher re-warms every published topic's mention
-map each hour, so topic pages are served from this cache.
+The archive intelligence refresher re-warms the mention map of every published
+topic and of the topics they link to, so topic pages are served from this cache.
 """
 
 import hashlib
@@ -25,9 +25,10 @@ logger = get_logger(__name__)
 
 ResultT = TypeVar("ResultT", bound=BaseModel)
 
-# Longer than the hourly topic warm-up, so warmed topic pages never expire
-# between runs.
 RESULT_TTL_SECONDS = 7200
+# Warmed topic pages outlive the gap between refresher runs (every 6 hours in
+# the client deployment), so they never expire before the next warm-up.
+WARMED_TTL_SECONDS = 7 * 3600
 
 # Primary-key maxima and the newest video edit are index or small-table reads.
 _CORPUS_VERSION_SQL = text("""
@@ -48,7 +49,13 @@ def _corpus_version(db) -> str | None:
 
 
 def _cached(
-    db, kind: str, model: type[ResultT], compute: Callable[[], Any], params: dict, refresh: bool = False
+    db,
+    kind: str,
+    model: type[ResultT],
+    compute: Callable[[], Any],
+    params: dict,
+    refresh: bool = False,
+    ttl: int = RESULT_TTL_SECONDS,
 ) -> ResultT:
     client = get_redis_client() if settings.ENABLE_CACHING else None
     version = _corpus_version(db) if client is not None else None
@@ -69,14 +76,14 @@ def _cached(
         pass  # Cache failures must not replace valid search results.
     result = model.model_validate(compute())
     try:
-        client.setex(key, RESULT_TTL_SECONDS, result.model_dump_json())
+        client.setex(key, ttl, result.model_dump_json())
     except Exception:
         pass
     return result
 
 
-def cached_mention_map(db, refresh: bool = False, **params) -> MentionMap:
-    return _cached(db, "mention-map", MentionMap, lambda: crud.get_mention_map(db, **params), params, refresh)
+def cached_mention_map(db, refresh: bool = False, ttl: int = RESULT_TTL_SECONDS, **params) -> MentionMap:
+    return _cached(db, "mention-map", MentionMap, lambda: crud.get_mention_map(db, **params), params, refresh, ttl)
 
 
 def topic_mention_map_params(q: str) -> dict[str, Any]:
@@ -94,19 +101,35 @@ def topic_mention_map_params(q: str) -> dict[str, Any]:
 
 
 def warm_topic_mention_maps(db) -> int:
-    """Recompute and cache the mention map of every published topic."""
+    """Recompute and cache the mention map of every published topic and its related topics.
+
+    Topic pages link to their related topics, so those pages are warmed too;
+    counting a common word on a cold database takes tens of seconds.
+    """
     if not settings.ENABLE_CACHING or get_redis_client() is None:
         return 0
     slugs = db.execute(text("SELECT slug FROM archive_topics WHERE status = 'published' ORDER BY slug")).scalars().all()
     warmed = 0
+    related: list[str] = []
     for slug in slugs:
-        try:
-            cached_mention_map(db, refresh=True, **topic_mention_map_params(slug))
+        result = _warm_mention_map(db, slug)
+        if result is not None:
             warmed += 1
-        except Exception:
-            db.rollback()
-            logger.warning("Topic mention map warm-up failed", extra={"topic": slug})
+            related.extend(result.related_topics or [])
+    published = set(slugs)
+    for term in dict.fromkeys(term for term in related if term not in published):
+        if _warm_mention_map(db, term) is not None:
+            warmed += 1
     return warmed
+
+
+def _warm_mention_map(db, q: str) -> MentionMap | None:
+    try:
+        return cached_mention_map(db, refresh=True, ttl=WARMED_TTL_SECONDS, **topic_mention_map_params(q))
+    except Exception:
+        db.rollback()
+        logger.warning("Topic mention map warm-up failed", extra={"topic": q})
+        return None
 
 
 def cached_grouped_search(db, **params) -> GroupedSearchResponse:
