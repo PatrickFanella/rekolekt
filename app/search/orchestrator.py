@@ -69,6 +69,7 @@ class SearchOrchestrator:
         language: str | None = None,
         has_speaker_labels: bool | None = None,
         category: str | None = None,
+        speaker: str | None = None,
         match_mode: str = "topic",
         sort_by: str = "relevance",
     ) -> SearchResponse:
@@ -92,7 +93,7 @@ class SearchOrchestrator:
             or match_mode != "topic"
         )
         filters = search_analytics.build_search_filters(
-            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category
+            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category, speaker
         )
         if match_mode != "topic":
             filters["match_mode"] = match_mode
@@ -148,6 +149,9 @@ class SearchOrchestrator:
                 opensearch_filters.append({"range": {"duration_seconds": duration_range}})
             if has_speaker_labels is not None:
                 opensearch_filters.append({"term": {"has_speaker_labels": has_speaker_labels}})
+            if speaker:
+                # Search documents carry the slug of the person a segment's label maps to.
+                opensearch_filters.append({"term": {"speaker_person": speaker}})
             if sort_by == "date_desc":
                 query["sort"] = [{"uploaded_at": {"order": "desc", "missing": "_last"}}, "_score"]
             elif sort_by == "date_asc":
@@ -488,11 +492,12 @@ class SearchOrchestrator:
         language: str | None = None,
         has_speaker_labels: bool | None = None,
         category: str | None = None,
+        speaker: str | None = None,
         match_mode: str = "topic",
         sort_by: str = "relevance",
     ) -> GroupedSearchResponse:
         filters = search_analytics.build_search_filters(
-            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category
+            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category, speaker
         )
         if match_mode != "topic":
             filters["match_mode"] = match_mode
@@ -536,12 +541,13 @@ class SearchOrchestrator:
         language: str | None = None,
         has_speaker_labels: bool | None = None,
         category: str | None = None,
+        speaker: str | None = None,
         match_mode: str = "topic",
         sort_by: str = "relevance",
         top_limit: int = 5,
     ) -> MentionMap:
         filters = search_analytics.build_search_filters(
-            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category
+            date_from, date_to, min_duration, max_duration, channel, language, has_speaker_labels, category, speaker
         )
         if match_mode != "topic":
             filters["match_mode"] = match_mode

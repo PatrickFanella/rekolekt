@@ -18,3 +18,4 @@ The opt-in [podcast feed](product/podcast-feed.md) (`PODCAST_FEED_ENABLED`) adds
 
 [Chat replay](product/chat-replay.md) serves imported chat for a recording by time range at `GET /videos/{video_id}/chat`. It returns 404 unless `CHAT_REPLAY_ENABLED` is set.
 [Transcript corrections](product/transcript-corrections.md) are opt-in; their routes are registered only when `TRANSCRIPT_CORRECTIONS_ENABLED` is set, so the committed OpenAPI omits them. Transcript responses always carry a `corrections` list of corrected segment ranges with their machine text.
+[Speaker identification](product/speaker-identification.md) adds `speaker=<person-slug>` to `/search`, `/search/grouped` and `/search/mention-map`, `speaker_person` to transcript segments and blocks, and admin endpoints under `/admin/videos/{video_id}/speakers` and `/admin/archive/metadata/people/{slug}/voice-references`.

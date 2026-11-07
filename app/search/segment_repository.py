@@ -83,6 +83,18 @@ def _video_filter_clauses(filters: dict[str, Any], params: dict[str, Any]) -> li
     return clauses
 
 
+def _speaker_clause(filters: dict[str, Any], params: dict[str, Any], video_column: str = "s.video_id") -> str | None:
+    """Native segments whose label is currently attributed to the published person."""
+    if not filters.get("speaker"):
+        return None
+    params["speaker"] = filters["speaker"]
+    return (
+        "EXISTS (SELECT 1 FROM video_speaker_people sp JOIN archive_people spp ON spp.id = sp.person_id "
+        f"WHERE sp.video_id = {video_column} AND sp.speaker_label = s.speaker_label "
+        "AND sp.invalidated_at IS NULL AND spp.status = 'published' AND spp.slug = :speaker)"
+    )
+
+
 def _native_branches(q, video_id, filters, params):
     """WHERE clauses for native transcript hits and title-only native hits."""
     text_match, highlighted_text, text_rank, title_match = _match_expressions("s", q, filters, params)
@@ -101,6 +113,9 @@ def _native_branches(q, video_id, filters, params):
     # and avoid duplicating segments which match both text and title.
     text_where = [text_match, *where_clauses]
     title_where = [title_match, f"({text_match}) IS NOT TRUE", *where_clauses]
+    if filters.get("speaker"):
+        text_where.append(_speaker_clause(filters, params))
+        title_where.append(_speaker_clause(filters, params, "v.id"))
     return text_where, title_where, (text_match, highlighted_text, text_rank, title_match)
 
 
@@ -112,6 +127,10 @@ def _youtube_branches(q, video_id, filters, params):
     # searches scan/return every caption segment for matching videos.
     text_where = [text_match]
     title_where = [f"({title_match} OR v.youtube_id ILIKE :title_q)"]
+    if filters.get("speaker"):
+        # Captions carry no speakers.
+        text_where.append("FALSE")
+        title_where.append("FALSE")
     if video_id:
         text_where.append("yt.video_id = :vid")
         title_where.append("yt.video_id = :vid")
@@ -155,6 +174,11 @@ def _best_branches(q, video_id, filters, params):
         else:
             native_where.append("s.speaker_label IS NULL")
             native_title_where.append("s.speaker_label IS NULL")
+    if filters.get("speaker"):
+        native_where.append(_speaker_clause(filters, params))
+        native_title_where.append(_speaker_clause(filters, params, "v.id"))
+        youtube_where.append("FALSE")
+        youtube_title_where.append("FALSE")
 
     youtube_where.append(_CAPTION_ONLY_LINE)
     youtube_title_where.append("NOT yt.overshadowed")

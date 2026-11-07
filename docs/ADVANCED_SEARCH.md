@@ -49,6 +49,14 @@ Filter videos that have speaker labels:
 GET /search?q=interview&has_speaker_labels=true
 ```
 
+#### Speaker Filtering
+Limit results to what one archive person said, by person slug. This uses
+[speaker identification](product/speaker-identification.md) mappings and also
+works on `/search/grouped` and `/search/mention-map`:
+```bash
+GET /search?q=healthcare&speaker=some-guest
+```
+
 ### 2. Sort Options
 
 Results can be sorted by multiple criteria:

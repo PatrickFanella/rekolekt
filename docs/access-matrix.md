@@ -18,6 +18,7 @@
 | API key issuance | authenticated owner; admin scopes require audited admin issuance |
 | Job requeue/quarantine/attempt administration and opinion correction | admin |
 | Source deletion | owner or admin |
+| Speaker label mapping and voice enrollment | admin |
 | Chat replay (`GET /videos/{video_id}/chat`) | public GET; opt-in feature; chat is imported by an operator CLI, not the API |
 | Transcript corrections (opt-in, `TRANSCRIPT_CORRECTIONS_ENABLED`) | propose and list own: authenticated; review queue, accept and reject: moderator; accepted corrections for a video: public |
 

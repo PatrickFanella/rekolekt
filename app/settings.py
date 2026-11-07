@@ -317,6 +317,11 @@ class Settings(BaseSettings):
     # explicit allow-list, processes at most that many, then exits.
     DIARIZATION_BACKLOG_MODE: bool = False
     DIARIZATION_BACKLOG_BATCH_SIZE: int = Field(default=10, ge=1, le=100)
+    # Automatic speaker identification compares each recording's speaker
+    # embeddings with enrolled voices. Writes stay off until the threshold has
+    # been chosen with scripts/evaluate_speaker_matching.py.
+    SPEAKER_AUTO_MATCH_ENABLED: bool = False
+    SPEAKER_MATCH_THRESHOLD: float = Field(default=0.75, ge=0.0, le=1.0)
     # Custom vocabulary post-processing
     ENABLE_CUSTOM_VOCABULARY: bool = True  # Apply custom vocabulary corrections
     # Translation support

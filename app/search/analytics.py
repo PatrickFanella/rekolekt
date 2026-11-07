@@ -25,6 +25,7 @@ def build_search_filters(
     language: str | None = None,
     has_speaker_labels: bool | None = None,
     category: str | None = None,
+    speaker: str | None = None,
 ) -> dict[str, Any]:
     filters: dict[str, Any] = {}
     if date_from:
@@ -43,6 +44,8 @@ def build_search_filters(
         filters["has_speaker_labels"] = has_speaker_labels
     if category:
         filters["category"] = category
+    if speaker:
+        filters["speaker"] = speaker
     return filters
 
 
