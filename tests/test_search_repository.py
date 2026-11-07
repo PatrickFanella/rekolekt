@@ -18,6 +18,10 @@ class FakeResult:
     def all(self):
         return self._rows
 
+    def scalar(self):
+        # EXPLAIN (FORMAT JSON) for the common-query estimate: a rare query.
+        return [{"Plan": {"Plan Rows": 1}}]
+
 
 class FakeDB:
     def __init__(self, rows):
@@ -103,9 +107,11 @@ def test_title_search_selects_earliest_segment_across_transcripts(db_session, me
         ", broadcast_date date GENERATED ALWAYS AS ((uploaded_at AT TIME ZONE 'UTC')::date) STORED) ON COMMIT DROP",
         "CREATE TEMP TABLE segments (id bigint, video_id text, start_ms int, end_ms int, "
         "text text, text_tsv tsvector, speaker_label text) ON COMMIT DROP",
-        "CREATE TEMP TABLE youtube_transcripts (id bigint, video_id text) ON COMMIT DROP",
+        "CREATE TEMP TABLE youtube_transcripts (id bigint, video_id text, "
+        "overshadowed boolean NOT NULL DEFAULT false) ON COMMIT DROP",
         "CREATE TEMP TABLE youtube_segments (id bigint, youtube_transcript_id bigint, "
-        "start_ms int, end_ms int, text text, text_tsv tsvector) ON COMMIT DROP",
+        "start_ms int, end_ms int, text text, text_tsv tsvector, overshadowed boolean NOT NULL DEFAULT false) "
+        "ON COMMIT DROP",
         "INSERT INTO videos (id,title,youtube_id,channel_name) VALUES "
         "('v1','titleonlyneedle','yt1','channel'), ('empty','titleonlyneedle','yt2','channel')",
         "INSERT INTO youtube_transcripts VALUES (1,'v1'), (2,'v1'), (3,'empty')",
@@ -194,7 +200,7 @@ def test_search_best_exact_phrase_mode_uses_unstemmed_phrase_query_for_both_sour
         filters={"match_mode": "exact_phrase"},
     )
 
-    sql = str(db.calls[0]["statement"])
+    sql = str(db.calls[-1]["statement"])
     assert "to_tsvector('simple', coalesce(s.text, '')) @@ phraseto_tsquery('simple', :q)" in sql
     assert "to_tsvector('simple', coalesce(ys.text, '')) @@ phraseto_tsquery('simple', :q)" in sql
 
@@ -260,9 +266,10 @@ def test_search_best_builds_expected_sql_and_preserves_source():
         }
     ]
     sql = str(db.calls[0]["statement"])
-    assert "NOT EXISTS (SELECT 1 FROM segments native_s WHERE native_s.video_id = yt.video_id)" in sql
-    # Caption text hits filter on caption-only transcript ids, not a per-row NOT EXISTS.
-    assert "ys.youtube_transcript_id = ANY(ARRAY(" in sql
+    # Captions of transcribed videos are flagged, so the partial caption indexes skip them.
+    assert "NOT yt.overshadowed" in sql
+    assert "NOT ys.overshadowed" in sql
+    assert "NOT EXISTS (SELECT 1 FROM segments native_s" not in sql
     assert "s.text_tsv @@ websearch_to_tsquery('english', :q) OR v.title ILIKE :title_q" not in sql
     assert "FROM segments s" in sql
     assert "WHERE s.text_tsv @@ websearch_to_tsquery('english', :q)" in sql
@@ -378,3 +385,66 @@ def test_postgres_backend_uses_repository(monkeypatch):
     assert results[0].video_id == "v7"
     assert results[0].snippet == "snip"
     assert results[0].highlights == ({"start": 0, "end": 4},)
+
+
+def _common_query_tables(db_session):
+    for sql in [
+        "CREATE TEMP TABLE videos (id text, title text, youtube_id text, uploaded_at timestamptz, "
+        "duration_seconds int, channel_name text, category text, language text"
+        ", broadcast_date date GENERATED ALWAYS AS ((uploaded_at AT TIME ZONE 'UTC')::date) STORED) ON COMMIT DROP",
+        "CREATE TEMP TABLE segments (id bigint, video_id text, start_ms int, end_ms int, "
+        "text text, text_tsv tsvector, speaker_label text) ON COMMIT DROP",
+        "CREATE TEMP TABLE youtube_transcripts (id bigint, video_id text, "
+        "overshadowed boolean NOT NULL DEFAULT false) ON COMMIT DROP",
+        "CREATE TEMP TABLE youtube_segments (id bigint, youtube_transcript_id bigint, "
+        "start_ms int, end_ms int, text text, text_tsv tsvector, overshadowed boolean NOT NULL DEFAULT false) "
+        "ON COMMIT DROP",
+        "INSERT INTO videos (id, title, youtube_id, uploaded_at) VALUES "
+        "('native_old','a','y1','2020-01-01'), ('native_new','b','y2','2026-01-01'), "
+        "('caption_old','c','y3','2019-01-01'), ('caption_new','d','y4','2025-01-01')",
+        "INSERT INTO segments VALUES "
+        "(1,'native_old',0,1000,'going going going',to_tsvector('english','going going going'),NULL), "
+        "(2,'native_new',0,1000,'going',to_tsvector('english','going'),NULL)",
+        "INSERT INTO youtube_transcripts (id, video_id) VALUES (1,'caption_old'), (2,'caption_new')",
+        "INSERT INTO youtube_segments VALUES "
+        "(1,1,0,1000,'going going going',to_tsvector('english','going going going'),false), "
+        "(2,2,0,1000,'going',to_tsvector('english','going'),false)",
+    ]:
+        db_session.execute(text(sql))
+
+
+def test_very_common_query_ranks_only_the_newest_videos(db_session, monkeypatch):
+    import app.search.segment_repository as repository
+
+    _common_query_tables(db_session)
+    repo = SearchRepository()
+    # The older videos repeat the word, so full ranking puts them first.
+    assert repo.search_best(db_session, q="going")[0]["video_id"] in {"native_old", "caption_old"}
+
+    monkeypatch.setattr(repository, "_estimated_matches", lambda *_args: 2 * repository.COMMON_QUERY_MATCHES)
+    rows = repo.search_best(db_session, q="going")
+    # Two videos per source and twice the threshold: each source ranks its newest video only.
+    assert {row["video_id"] for row in rows} == {"native_new", "caption_new"}
+    # Date order and filtered searches keep every match.
+    assert {row["video_id"] for row in repo.search_best(db_session, q="going", sort_by="date_desc")} == {
+        "native_old",
+        "native_new",
+        "caption_old",
+        "caption_new",
+    }
+    filtered = repo.search_best(db_session, q="going", filters={"date_from": "2000-01-01"})
+    assert {row["video_id"] for row in filtered} == {"native_old", "native_new", "caption_old", "caption_new"}
+
+
+def test_rare_query_is_not_capped():
+    db = FakeDB([])
+    SearchRepository().search_best(db, q="needle")
+    statements = [str(call["statement"]) for call in db.calls]
+    assert len(statements) == 3
+    assert all("EXPLAIN (FORMAT JSON)" in sql for sql in statements[:2])
+    assert ":native_recent_videos" not in statements[-1]
+    assert ":caption_recent_videos" not in statements[-1]
+
+    db = FakeDB([])
+    SearchRepository().search_best(db, q="needle", sort_by="date_desc")
+    assert len(db.calls) == 1

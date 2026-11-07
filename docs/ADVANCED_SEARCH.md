@@ -53,7 +53,11 @@ GET /search?q=interview&has_speaker_labels=true
 
 Results can be sorted by multiple criteria:
 
-- **relevance** (default) - Best matching results first
+- **relevance** (default) - Best matching results first. For a very common
+  word (more than about 20,000 estimated matches in a source), an unfiltered
+  best-source search ranks only the matches from the newest broadcasts, enough
+  videos to hold about 20,000 matches. Date sorts and filtered searches rank
+  every match.
 - **date_desc** - Newest videos first
 - **date_asc** - Oldest videos first
 - **duration_desc** - Longest videos first
