@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 from sqlalchemy import text
 
-from app import crud
+from app import crud, transcript_corrections
 from app.archive.broadcast_dates import broadcast_columns
 from app.cache import invalidate_video_data
 from app.logging_config import get_logger
@@ -35,6 +35,7 @@ class NativePipelineDependencies:
     transcribe_chunk: Callable[..., tuple[list[dict[str, Any]], dict[str, Any] | None]] = transcribe_chunk
     diarize_and_align: Callable[[Path, list[dict[str, Any]]], list[dict[str, Any]]] = diarize_and_align
     replace_transcript_blocks: Callable[[Any, Any, list[Any]], Any] = crud.replace_transcript_blocks
+    reapply_corrections: Callable[[Any, Any, str], None] = transcript_corrections.reapply_corrections
     refresh_job_state: Callable[[Any, Any], None] | None = None
 
 
@@ -489,6 +490,7 @@ def _persist_transcript(ctx: VideoPipelineContext, deps: NativePipelineDependenc
             ]
         )
         deps.replace_transcript_blocks(conn, ctx.video_id, blocks)
+        deps.reapply_corrections(conn, ctx.video_id, "whisper")
         deps.logger.info("Marking video as completed")
         completed = conn.execute(
             text("""

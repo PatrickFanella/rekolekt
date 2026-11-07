@@ -365,6 +365,10 @@ app.include_router(analytics_router)
 app.include_router(search_router)
 app.include_router(support_router)
 app.include_router(vocabularies_router)
+if settings.TRANSCRIPT_CORRECTIONS_ENABLED:
+    from .routes.corrections import router as corrections_router  # noqa: E402
+
+    app.include_router(corrections_router)
 
 
 @app.get(

@@ -17,3 +17,4 @@ The opt-in [podcast feed](product/podcast-feed.md) (`PODCAST_FEED_ENABLED`) adds
 `GET /videos/{video_id}/transcript` and `transcript.json` accept `include=words` to add stored Whisper [word timings](product/word-timings.md) to each segment, bounded to 100,000 words per response.
 
 [Chat replay](product/chat-replay.md) serves imported chat for a recording by time range at `GET /videos/{video_id}/chat`. It returns 404 unless `CHAT_REPLAY_ENABLED` is set.
+[Transcript corrections](product/transcript-corrections.md) are opt-in; their routes are registered only when `TRANSCRIPT_CORRECTIONS_ENABLED` is set, so the committed OpenAPI omits them. Transcript responses always carry a `corrections` list of corrected segment ranges with their machine text.

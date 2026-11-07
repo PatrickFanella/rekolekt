@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.cache import invalidate_video_data
 from app.logging_config import get_logger
 from app.settings import settings
+from app.transcript_corrections import reapply_corrections
 from worker.repositories import VideoRepository
 from worker.youtube.service import YouTubeCaptionResult, YouTubeService
 from worker.youtube_captions import YouTubeCaptionFetchError, YouTubeCaptionRateLimitError, fetch_youtube_auto_captions
@@ -125,6 +126,7 @@ def _ingest_available_captions_impl(
                 """),
                     {"t": yt_tr_id, "s": int(s.start * 1000), "e": int(s.end * 1000), "txt": s.text},
                 )
+            reapply_corrections(db, vid, "youtube")
             logger.info("Persisted %d YouTube caption segments for %s", len(segs), yid)
             video_repo.mark_caption_completed(str(vid))
             invalidate_video_data(vid)

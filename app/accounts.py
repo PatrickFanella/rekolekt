@@ -171,6 +171,12 @@ def delete_prepared_account(db, prepared: PreparedAccountDeletion) -> None:
     """),
         {"id": user_id},
     )
+    # Unaccepted proposals are the user's own content. Accepted corrections are now
+    # archive text; the foreign key keeps them and clears the proposer.
+    db.execute(
+        text("DELETE FROM segment_corrections WHERE proposer_id=:id AND accepted_at IS NULL"),
+        {"id": user_id},
+    )
     db.execute(text("DELETE FROM users WHERE id=:id"), {"id": user_id})
 
 
@@ -543,6 +549,11 @@ def merge_account_identity(
         text("UPDATE community_posts SET author_id=CAST(:target AS uuid) WHERE author_id=CAST(:source AS uuid)"),
         {"target": target_user_id, "source": source_user_id},
     )
+    for column in ("proposer_id", "reviewer_id"):
+        db.execute(
+            text(f"UPDATE segment_corrections SET {column}=CAST(:target AS uuid) WHERE {column}=CAST(:source AS uuid)"),
+            {"target": target_user_id, "source": source_user_id},
+        )
     # A duplicate report remains open if either account still had an open report.
     db.execute(
         text("""UPDATE community_reports target SET status='open'

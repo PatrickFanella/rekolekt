@@ -232,11 +232,13 @@ def test_persist_stage_finalizes_video_and_refreshes_job(tmp_path: Path):
     )
     refresh_job_state = Mock()
     replace_transcript_blocks = Mock()
+    reapply_corrections = Mock()
     deps = NativePipelineDependencies(
         settings=_Settings(),
         logger=Mock(),
         replace_transcript_blocks=replace_transcript_blocks,
         refresh_job_state=refresh_job_state,
+        reapply_corrections=reapply_corrections,
     )
 
     def execute(statement, *args, **kwargs):
@@ -252,6 +254,7 @@ def test_persist_stage_finalizes_video_and_refreshes_job(tmp_path: Path):
 
     assert replace_transcript_blocks.called
     assert refresh_job_state.called
+    reapply_corrections.assert_called_once_with(conn, video_id, "whisper")
     assert any("UPDATE videos" in str(call.args[0]) for call in conn.execute.call_args_list)
 
 
@@ -319,7 +322,11 @@ def test_persist_stage_stores_word_timings_beside_the_segment(tmp_path: Path):
 
     conn.execute.side_effect = execute
     deps = NativePipelineDependencies(
-        settings=_Settings(), logger=Mock(), replace_transcript_blocks=Mock(), refresh_job_state=Mock()
+        settings=_Settings(),
+        logger=Mock(),
+        replace_transcript_blocks=Mock(),
+        refresh_job_state=Mock(),
+        reapply_corrections=Mock(),
     )
 
     _persist_transcript(ctx, deps)

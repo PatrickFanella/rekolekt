@@ -189,6 +189,19 @@ WORD_TIMINGS_NOTE_DESCRIPTION = (
 )
 
 
+class CorrectionMark(BaseModel):
+    """A segment range showing an accepted user correction instead of the machine text."""
+
+    start_ms: int = Field(..., description="Start of the corrected segment in milliseconds")
+    end_ms: int = Field(..., description="End of the corrected segment in milliseconds")
+    machine_text: str = Field(..., description="The machine transcript text this correction replaced")
+
+
+CORRECTIONS_FIELD_DESCRIPTION = (
+    "Segments whose text is an accepted correction, with the original machine text. " "Empty for merged transcripts."
+)
+
+
 class TranscriptResponse(BaseModel):
     """Complete transcript for a video with all segments."""
 
@@ -198,6 +211,7 @@ class TranscriptResponse(BaseModel):
         "whisper", description="Transcript source used for this response"
     )
     source_label: str = Field("Whisper transcript", description="Human-readable transcript source label")
+    corrections: List[CorrectionMark] = Field(default_factory=list, description=CORRECTIONS_FIELD_DESCRIPTION)
 
     model_config = {
         "json_schema_extra": {
@@ -243,6 +257,7 @@ class YouTubeTranscriptResponse(BaseModel):
     blocks: List["TranscriptBlockResponse"] = Field(default_factory=list, description="Formatted caption blocks")
     source: Literal["youtube"] = Field("youtube", description="Transcript source used for this response")
     source_label: str = Field("YouTube captions", description="Human-readable transcript source label")
+    corrections: List[CorrectionMark] = Field(default_factory=list, description=CORRECTIONS_FIELD_DESCRIPTION)
 
 
 class HighlightRange(BaseModel):
@@ -1280,6 +1295,7 @@ class CleanedTranscriptResponse(BaseModel):
     segments: List[CleanedSegment] = Field(..., description="Cleaned transcript segments")
     cleanup_config: CleanupConfig = Field(..., description="Cleanup configuration used")
     stats: CleanupStats = Field(..., description="Statistics about cleanup operations")
+    corrections: List[CorrectionMark] = Field(default_factory=list, description=CORRECTIONS_FIELD_DESCRIPTION)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of cleanup")
 
     model_config = {
@@ -1365,6 +1381,7 @@ class FormattedTranscriptResponse(BaseModel):
         "whisper", description="Transcript source used for this response"
     )
     source_label: str = Field("Whisper transcript", description="Human-readable transcript source label")
+    corrections: List[CorrectionMark] = Field(default_factory=list, description=CORRECTIONS_FIELD_DESCRIPTION)
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Timestamp of formatting"
     )
