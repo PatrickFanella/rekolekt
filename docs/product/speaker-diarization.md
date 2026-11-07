@@ -51,6 +51,8 @@ After writing labels, the worker replaces the recording's rows in
 speaking time, and the model that produced it. The embedding is the
 speech-weighted mean of that speaker's window embeddings. Embeddings from
 different models are not comparable, so consumers must match on `model`.
+[Speaker identification](speaker-identification.md) compares them with
+enrolled voices.
 
 ## Backlog runs
 

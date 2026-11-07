@@ -88,6 +88,8 @@ def ensure_index(name: str, recreate: bool = False):
                 "video_id": {"type": "keyword"},
                 "start_ms": {"type": "integer"},
                 "end_ms": {"type": "integer"},
+                # Slug of the archive person the segment's speaker label maps to.
+                "speaker_person": {"type": "keyword"},
                 "text": {
                     "type": "text",
                     "analyzer": "text_en_index",
@@ -107,6 +109,11 @@ def ensure_index(name: str, recreate: bool = False):
         delr = requests.delete(url, timeout=30)
         delr.raise_for_status()
     elif r.status_code == 200:
+        # Adding a field to an existing index is allowed; keep older indexes filterable.
+        added = requests.put(
+            f"{url}/_mapping", json={"properties": {"speaker_person": {"type": "keyword"}}}, timeout=30
+        )
+        added.raise_for_status()
         return
     r = requests.put(url, json=mapping, timeout=60)
     if r.status_code >= 400:

@@ -143,6 +143,12 @@ def search(
     channel: str | None = Query(None, description="Filter by channel name"),
     language: str | None = Query(None, description="Filter by language code (e.g., 'en', 'es')"),
     has_speaker_labels: bool | None = Query(None, description="Filter videos with speaker diarization"),
+    speaker: str | None = Query(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Only segments whose diarized speaker is attributed to this archive person (slug)",
+    ),
     category: str | None = Query(None, description="Filter by video category/type"),
     match_mode: str = Query("topic", description="Matching rule: topic, exact_phrase, or whole_word"),
     sort_by: str = Query(
@@ -176,6 +182,7 @@ def search(
         channel=channel,
         language=language,
         has_speaker_labels=has_speaker_labels,
+        speaker=speaker,
         category=category,
         match_mode=match_mode,
         sort_by=sort_by,
@@ -418,6 +425,12 @@ def search_grouped(
     channel: str | None = Query(None, description="Filter by channel name"),
     language: str | None = Query(None, description="Filter by language code (e.g., 'en', 'es')"),
     has_speaker_labels: bool | None = Query(None, description="Filter videos with speaker diarization"),
+    speaker: str | None = Query(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Only segments whose diarized speaker is attributed to this archive person (slug)",
+    ),
     category: str | None = Query(None, description="Filter by video category/type"),
     match_mode: str = Query("topic", description="Matching rule: topic, exact_phrase, or whole_word"),
     sort_by: str = Query(
@@ -451,6 +464,7 @@ def search_grouped(
         channel=channel,
         language=language,
         has_speaker_labels=has_speaker_labels,
+        speaker=speaker,
         category=category,
         match_mode=match_mode,
         sort_by=sort_by,
@@ -477,6 +491,12 @@ def search_mention_map(
     channel: str | None = Query(None, description="Filter by channel name"),
     language: str | None = Query(None, description="Filter by language code (e.g., 'en', 'es')"),
     has_speaker_labels: bool | None = Query(None, description="Filter videos with speaker diarization"),
+    speaker: str | None = Query(
+        None,
+        min_length=1,
+        max_length=200,
+        description="Only segments whose diarized speaker is attributed to this archive person (slug)",
+    ),
     category: str | None = Query(None, description="Filter by video category/type"),
     match_mode: str = Query("topic", description="Matching rule: topic, exact_phrase, or whole_word"),
     sort_by: str = Query(
@@ -511,6 +531,7 @@ def search_mention_map(
         channel=channel,
         language=language,
         has_speaker_labels=has_speaker_labels,
+        speaker=speaker,
         category=category,
         match_mode=match_mode,
         sort_by=sort_by,

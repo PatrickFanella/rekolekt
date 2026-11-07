@@ -22,6 +22,7 @@ from ..schemas import (
     QuotedMomentsResponse,
     RelatedEpisodesResponse,
     Segment,
+    SpeakerPerson,
     TranscriptBlockResponse,
     TranscriptResponse,
     VideoChapterResponse,
@@ -32,6 +33,7 @@ from ..schemas import (
 )
 from ..security import ROLE_ADMIN, get_user_required, get_user_role
 from ..source_deletion import cleanup_deleted_source, delete_source
+from ..speakers import transcript_speaker_people
 from ..transcripts.blocks import FORMATTER_VERSION, build_transcript_blocks
 from ..transcripts.merged import build_merged_transcript
 from ..transcripts.service import TranscriptPresentationService
@@ -212,6 +214,17 @@ def get_transcript(
     db=Depends(get_db),
 ):
     """Get the Whisper-generated transcript for a video."""
+    result = _get_transcript(video_id, response, mode, source, db)
+    people = transcript_speaker_people(db, video_id)
+    if people:
+        for item in [*result.segments, *getattr(result, "blocks", [])]:
+            person = people.get(item.speaker_label) if item.speaker_label else None
+            if person is not None:
+                item.speaker_person = SpeakerPerson(**person)
+    return result
+
+
+def _get_transcript(video_id: uuid.UUID, response: Response, mode: str, source: str, db):
     # Check if video exists
     video = crud.get_video(db, video_id)
     if not video:

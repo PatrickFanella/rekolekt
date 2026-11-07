@@ -546,6 +546,8 @@ def test_upgraded_and_fresh_schema_have_complete_user_fk_and_cleanup_inventory(a
         "archive_chapter_feedback",
         "archive_label_feedback",
         "archive_opinion_revisions",
+        "video_speaker_people",
+        "speaker_voice_references",
     )
     command.upgrade(alembic_config, "head")
     with get_engine(test_db_url) as engine:
@@ -569,9 +571,11 @@ def test_upgraded_and_fresh_schema_have_complete_user_fk_and_cleanup_inventory(a
         ("saved_searches", "user_id", "c"),
         ("source_deletions", "deleted_by_user_id", "n"),
         ("source_deletions", "owner_user_id", "n"),
+        ("speaker_voice_references", "created_by", "n"),
         ("user_identities", "user_id", "c"),
         ("user_searches", "user_id", "c"),
         ("user_vocabularies", "user_id", "c"),
+        ("video_speaker_people", "set_by", "n"),
     }
 
     schema = (Path(__file__).resolve().parent.parent / "sql" / "schema.sql").read_text()

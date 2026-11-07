@@ -3177,6 +3177,17 @@
             "description": "Speaker label from diarization",
             "title": "Speaker Label"
           },
+          "speaker_person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerPerson"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive person the speaker label is attributed to, when one is mapped"
+          },
           "start_ms": {
             "description": "Start time in milliseconds",
             "minimum": 0.0,
@@ -6632,6 +6643,17 @@
             "description": "Speaker label from diarization (e.g., 'Speaker 1')",
             "title": "Speaker Label"
           },
+          "speaker_person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerPerson"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive person the speaker label is attributed to, when one is mapped"
+          },
           "start_ms": {
             "description": "Start time in milliseconds",
             "minimum": 0.0,
@@ -6820,6 +6842,351 @@
           "community_enabled"
         ],
         "title": "SiteConfig",
+        "type": "object"
+      },
+      "SpeakerMappingAdmin": {
+        "properties": {
+          "invalidated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidated At"
+          },
+          "invalidated_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Invalidated Reason"
+          },
+          "method": {
+            "enum": [
+              "manual",
+              "auto"
+            ],
+            "title": "Method",
+            "type": "string"
+          },
+          "person_display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Person Display Name"
+          },
+          "person_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Mapped person; null when an administrator cleared the label",
+            "title": "Person Slug"
+          },
+          "score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Cosine similarity for automatic matches",
+            "title": "Score"
+          },
+          "set_at": {
+            "format": "date-time",
+            "title": "Set At",
+            "type": "string"
+          },
+          "set_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Administrator who set it; null for automatic matches",
+            "title": "Set By"
+          },
+          "status": {
+            "description": "stale after the recording's labels changed (reprocessing or rediarization)",
+            "enum": [
+              "active",
+              "cleared",
+              "stale"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "method",
+          "set_at",
+          "status"
+        ],
+        "title": "SpeakerMappingAdmin",
+        "type": "object"
+      },
+      "SpeakerMappingResult": {
+        "properties": {
+          "person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerPerson"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reindexed_segments": {
+            "title": "Reindexed Segments",
+            "type": "integer"
+          },
+          "speaker_label": {
+            "title": "Speaker Label",
+            "type": "string"
+          },
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "speaker_label",
+          "reindexed_segments"
+        ],
+        "title": "SpeakerMappingResult",
+        "type": "object"
+      },
+      "SpeakerMappingUpdate": {
+        "properties": {
+          "enroll": {
+            "default": false,
+            "description": "Also enroll the label's voice as a reference for the person",
+            "title": "Enroll",
+            "type": "boolean"
+          },
+          "person_slug": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Person Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_slug"
+        ],
+        "title": "SpeakerMappingUpdate",
+        "type": "object"
+      },
+      "SpeakerPerson": {
+        "description": "The archive person a diarized speaker label is attributed to.",
+        "properties": {
+          "display_name": {
+            "description": "Archive person display name",
+            "title": "Display Name",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Archive person slug",
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "display_name"
+        ],
+        "title": "SpeakerPerson",
+        "type": "object"
+      },
+      "SpeakerSample": {
+        "properties": {
+          "end_ms": {
+            "minimum": 0.0,
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "id": {
+            "description": "Segment id",
+            "title": "Id",
+            "type": "integer"
+          },
+          "start_ms": {
+            "minimum": 0.0,
+            "title": "Start Ms",
+            "type": "integer"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "start_ms",
+          "end_ms",
+          "text"
+        ],
+        "title": "SpeakerSample",
+        "type": "object"
+      },
+      "SpeakerSuggestion": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "score": {
+            "description": "Cosine similarity with the person's closest enrolled voice",
+            "title": "Score",
+            "type": "number"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "display_name",
+          "score"
+        ],
+        "title": "SpeakerSuggestion",
+        "type": "object"
+      },
+      "SpeakerVoiceReference": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "segment_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Segment Ids",
+            "type": "array"
+          },
+          "speaker_label": {
+            "title": "Speaker Label",
+            "type": "string"
+          },
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "video_id",
+          "speaker_label",
+          "segment_ids",
+          "model",
+          "created_at"
+        ],
+        "title": "SpeakerVoiceReference",
+        "type": "object"
+      },
+      "SpeakerVoiceReferenceCreate": {
+        "properties": {
+          "segment_ids": {
+            "description": "Confirmed segments of this voice",
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 50,
+            "minItems": 1,
+            "title": "Segment Ids",
+            "type": "array"
+          },
+          "speaker_label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Speaker Label",
+            "type": "string"
+          },
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "speaker_label",
+          "segment_ids"
+        ],
+        "title": "SpeakerVoiceReferenceCreate",
+        "type": "object"
+      },
+      "SpeakerVoiceReferenceListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SpeakerVoiceReference"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "person_slug": {
+            "title": "Person Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "person_slug",
+          "items"
+        ],
+        "title": "SpeakerVoiceReferenceListResponse",
         "type": "object"
       },
       "SupportConfig": {
@@ -7082,6 +7449,17 @@
             ],
             "description": "Speaker label for the block",
             "title": "Speaker Label"
+          },
+          "speaker_person": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerPerson"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Archive person the speaker label is attributed to, when one is mapped"
           },
           "start_ms": {
             "description": "Start time in milliseconds",
@@ -7569,6 +7947,93 @@
           "youtube_id"
         ],
         "title": "VideoInfo",
+        "type": "object"
+      },
+      "VideoSpeakerAdmin": {
+        "properties": {
+          "has_embedding": {
+            "description": "True when diarization stored a voice embedding for the label",
+            "title": "Has Embedding",
+            "type": "boolean"
+          },
+          "mapping": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerMappingAdmin"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "samples": {
+            "items": {
+              "$ref": "#/components/schemas/SpeakerSample"
+            },
+            "title": "Samples",
+            "type": "array"
+          },
+          "segment_count": {
+            "title": "Segment Count",
+            "type": "integer"
+          },
+          "speaker_label": {
+            "title": "Speaker Label",
+            "type": "string"
+          },
+          "speech_seconds": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Speaking time from the stored voice embedding",
+            "title": "Speech Seconds"
+          },
+          "suggestion": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/SpeakerSuggestion"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Best enrolled voice, excluding references taken from this recording"
+          }
+        },
+        "required": [
+          "speaker_label",
+          "segment_count",
+          "has_embedding",
+          "samples"
+        ],
+        "title": "VideoSpeakerAdmin",
+        "type": "object"
+      },
+      "VideoSpeakerAdminListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/VideoSpeakerAdmin"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "video_id": {
+            "format": "uuid",
+            "title": "Video Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "video_id",
+          "items"
+        ],
+        "title": "VideoSpeakerAdminListResponse",
         "type": "object"
       },
       "VocabularyCreate": {
@@ -8886,6 +9351,144 @@
         "summary": "Update archive person (Admin)",
         "tags": [
           "Archive"
+        ]
+      }
+    },
+    "/admin/archive/metadata/people/{slug}/voice-references": {
+      "get": {
+        "operationId": "admin_list_voice_references_admin_archive_metadata_people__slug__voice_references_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerVoiceReferenceListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List a person's enrolled voices (Admin)",
+        "tags": [
+          "Speakers"
+        ]
+      },
+      "post": {
+        "description": "Mark segments of one recording's speaker label as this person. The label's stored voice embedding becomes a reference for automatic matching.",
+        "operationId": "admin_add_voice_reference_admin_archive_metadata_people__slug__voice_references_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeakerVoiceReferenceCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerVoiceReference"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Enroll a confirmed voice for a person (Admin)",
+        "tags": [
+          "Speakers"
+        ]
+      }
+    },
+    "/admin/archive/metadata/people/{slug}/voice-references/{reference_id}": {
+      "delete": {
+        "operationId": "admin_delete_voice_reference_admin_archive_metadata_people__slug__voice_references__reference_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "slug",
+            "required": true,
+            "schema": {
+              "title": "Slug",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "reference_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Reference Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Remove an enrolled voice (Admin)",
+        "tags": [
+          "Speakers"
         ]
       }
     },
@@ -10827,6 +11430,163 @@
         "summary": "Set user role (Admin)",
         "tags": [
           "Admin"
+        ]
+      }
+    },
+    "/admin/videos/{video_id}/speakers": {
+      "get": {
+        "description": "Distinct diarized labels with segment counts, sample segments, the current mapping and the best enrolled-voice suggestion.",
+        "operationId": "admin_list_video_speakers_admin_videos__video_id__speakers_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VideoSpeakerAdminListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List a recording's speaker labels (Admin)",
+        "tags": [
+          "Speakers"
+        ]
+      }
+    },
+    "/admin/videos/{video_id}/speakers/{speaker_label}": {
+      "delete": {
+        "description": "Records that the label is no known person. Automatic matching leaves cleared labels alone.",
+        "operationId": "admin_clear_video_speaker_admin_videos__video_id__speakers__speaker_label__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "speaker_label",
+            "required": true,
+            "schema": {
+              "title": "Speaker Label",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerMappingResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Clear a speaker label's person (Admin)",
+        "tags": [
+          "Speakers"
+        ]
+      },
+      "put": {
+        "operationId": "admin_set_video_speaker_admin_videos__video_id__speakers__speaker_label__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "video_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Video Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "speaker_label",
+            "required": true,
+            "schema": {
+              "title": "Speaker Label",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpeakerMappingUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpeakerMappingResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Map a speaker label to an archive person (Admin)",
+        "tags": [
+          "Speakers"
         ]
       }
     },
@@ -13248,6 +14008,26 @@
             }
           },
           {
+            "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+            "in": "query",
+            "name": "speaker",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+              "title": "Speaker"
+            }
+          },
+          {
             "description": "Filter by video category/type",
             "in": "query",
             "name": "category",
@@ -13814,6 +14594,26 @@
             }
           },
           {
+            "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+            "in": "query",
+            "name": "speaker",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+              "title": "Speaker"
+            }
+          },
+          {
             "description": "Filter by video category/type",
             "in": "query",
             "name": "category",
@@ -14134,6 +14934,26 @@
               ],
               "description": "Filter videos with speaker diarization",
               "title": "Has Speaker Labels"
+            }
+          },
+          {
+            "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+            "in": "query",
+            "name": "speaker",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 200,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only segments whose diarized speaker is attributed to this archive person (slug)",
+              "title": "Speaker"
             }
           },
           {

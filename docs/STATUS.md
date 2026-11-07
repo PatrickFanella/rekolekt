@@ -13,7 +13,7 @@ excluded from the repository; Git history retains them when historical context i
 | API and authorization | [API reference](api-reference.md), [generated OpenAPI](api/openapi.json), [versioning](api/versioning.md), [access matrix](access-matrix.md), [authentication](authentication.md) |
 | Branding and releases | [client branding](deployment/client-branding.md), [deployment matrix](deployment/README.md), [release process](development/release-process.md) |
 | Database and operations | [migrations](MIGRATIONS.md), [operations](operations/README.md), [production readiness](operations/production-readiness.md), [backup operations](operations/backup-operations.md) |
-| Product contracts | [passage sharing](product/passage-sharing.md), [creator community](product/creator-community.md), [authorized clips](product/authorized-original-clips.md), [speaker diarization](product/speaker-diarization.md) |
+| Product contracts | [passage sharing](product/passage-sharing.md), [creator community](product/creator-community.md), [authorized clips](product/authorized-original-clips.md), [speaker diarization](product/speaker-diarization.md), [speaker identification](product/speaker-identification.md) |
 | Frontends | Core is headless. Archives own their frontends; the [`rekolekt-web`](https://git.subcult.tv/subculture-collective/rekolekt-web) kit and its `archive/reference-app-ae1cc82` branch hold the former design system, accessibility notes and reference app. |
 
 The [private-beta runbook](deployment/private-beta.md) and [moderated testing

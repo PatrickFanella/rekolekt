@@ -17,5 +17,6 @@
 | API key issuance | authenticated owner; admin scopes require audited admin issuance |
 | Job requeue/quarantine/attempt administration and opinion correction | admin |
 | Source deletion | owner or admin |
+| Speaker label mapping and voice enrollment | admin |
 
 API-key read scopes are `search:read`, `videos:read`, `exports:read`, and `jobs:read`; mutation scope is `jobs:write`.
