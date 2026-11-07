@@ -28,6 +28,7 @@ def test_site_config_is_explicit_public_allowlist(monkeypatch):
         "creator_name",
         "description",
         "community_enabled",
+        "transcript_corrections_enabled",
         "atproto_enabled",
         "clip_exports_enabled",
         "chat_replay_enabled",

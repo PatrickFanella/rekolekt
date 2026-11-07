@@ -3422,6 +3422,14 @@
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
           },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "created_at": {
             "description": "Timestamp of cleanup",
             "format": "date-time",
@@ -3827,6 +3835,33 @@
         "title": "CommunityTimeline",
         "type": "object"
       },
+      "CorrectionMark": {
+        "description": "A segment range showing an accepted user correction instead of the machine text.",
+        "properties": {
+          "end_ms": {
+            "description": "End of the corrected segment in milliseconds",
+            "title": "End Ms",
+            "type": "integer"
+          },
+          "machine_text": {
+            "description": "The machine transcript text this correction replaced",
+            "title": "Machine Text",
+            "type": "string"
+          },
+          "start_ms": {
+            "description": "Start of the corrected segment in milliseconds",
+            "title": "Start Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "start_ms",
+          "end_ms",
+          "machine_text"
+        ],
+        "title": "CorrectionMark",
+        "type": "object"
+      },
       "CreateAPIKeyRequest": {
         "description": "Request to create a new API key.",
         "properties": {
@@ -3979,6 +4014,14 @@
           "cleanup_config": {
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
+          },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
           },
           "created_at": {
             "description": "Timestamp of formatting",
@@ -7003,6 +7046,10 @@
             "$ref": "#/components/schemas/BrandTheme",
             "deprecated": true,
             "description": "Deprecated: frontends own their styling. Still served so existing frontends keep working."
+          },
+          "transcript_corrections_enabled": {
+            "title": "Transcript Corrections Enabled",
+            "type": "boolean"
           }
         },
         "required": [
@@ -7013,7 +7060,8 @@
           "clip_exports_enabled",
           "chat_replay_enabled",
           "atproto_enabled",
-          "community_enabled"
+          "community_enabled",
+          "transcript_corrections_enabled"
         ],
         "title": "SiteConfig",
         "type": "object"
@@ -7476,6 +7524,14 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "segments": {
             "description": "List of transcript segments in chronological order",
             "items": {
@@ -8082,6 +8138,14 @@
             "$ref": "#/components/schemas/CleanupConfig",
             "description": "Cleanup configuration used"
           },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "created_at": {
             "description": "Timestamp of formatting",
             "format": "date-time",
@@ -8251,6 +8315,14 @@
           "video_id": "123e4567-e89b-12d3-a456-426614174000"
         },
         "properties": {
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
+            "type": "array"
+          },
           "segments": {
             "description": "Transcript segments with word timings",
             "items": {
@@ -8357,6 +8429,14 @@
               "$ref": "#/components/schemas/TranscriptBlockResponse"
             },
             "title": "Blocks",
+            "type": "array"
+          },
+          "corrections": {
+            "description": "Segments whose text is an accepted correction, with the original machine text. Empty for merged transcripts.",
+            "items": {
+              "$ref": "#/components/schemas/CorrectionMark"
+            },
+            "title": "Corrections",
             "type": "array"
           },
           "full_text": {

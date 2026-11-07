@@ -535,6 +535,7 @@ class TestVideosRoutes:
                 (2000, 3000, "continues"),
             ],
         )
+        monkeypatch.setattr("app.routes.videos.transcript_corrections.applied_marks", lambda *args: [])
 
         response = get_youtube_transcript(video_id=video_id, mode="formatted", db=db)
 

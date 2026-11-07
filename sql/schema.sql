@@ -730,3 +730,29 @@ CREATE TABLE chat_messages (
     metadata JSONB
 );
 CREATE INDEX chat_messages_video_offset ON chat_messages (video_id, offset_ms, id);
+CREATE TABLE segment_corrections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    video_id UUID NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    source TEXT NOT NULL CHECK (source IN ('whisper','youtube')),
+    start_ms INTEGER NOT NULL CHECK (start_ms >= 0),
+    end_ms INTEGER NOT NULL CHECK (end_ms >= start_ms),
+    original_sha256 TEXT NOT NULL CHECK (original_sha256 ~ '^[0-9a-f]{64}$'),
+    original_text TEXT NOT NULL,
+    corrected_text TEXT NOT NULL CHECK (length(btrim(corrected_text)) BETWEEN 1 AND 2000),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK (status IN ('pending','accepted','rejected','stale','superseded')),
+    proposer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    reviewer_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    review_reason TEXT CHECK (review_reason IS NULL OR length(btrim(review_reason)) BETWEEN 1 AND 1000),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    reviewed_at TIMESTAMPTZ,
+    accepted_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (status <> 'accepted' OR accepted_at IS NOT NULL)
+);
+CREATE UNIQUE INDEX segment_corrections_one_applied
+    ON segment_corrections(video_id, source, start_ms, end_ms) WHERE status = 'accepted';
+CREATE INDEX segment_corrections_by_video ON segment_corrections(video_id, source, start_ms);
+CREATE INDEX segment_corrections_queue ON segment_corrections(status, created_at)
+    WHERE status IN ('pending','stale');
+CREATE INDEX segment_corrections_proposer ON segment_corrections(proposer_id, created_at DESC);

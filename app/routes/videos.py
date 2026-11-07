@@ -5,7 +5,7 @@ from typing import Literal, Optional, Union
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import text
 
-from .. import crud
+from .. import crud, transcript_corrections
 from ..archive.product_intelligence import quoted_moments, related_episodes
 from ..archive.video_chapters import build_grounded_chapters
 from ..audit import ACTION_USER_DATA_DELETION, write_audit_from_request
@@ -15,6 +15,7 @@ from ..feed_cursor import CursorError, FeedCursor, decode_cursor, encode_cursor,
 from ..schemas import (
     CleanedTranscriptResponse,
     CleanupConfig,
+    CorrectionMark,
     ErrorResponse,
     FormattedTranscriptResponse,
     PageInfo,
@@ -259,6 +260,16 @@ def get_transcript(
     with_words = include == "words"
     if with_words and mode == "cleaned":
         raise ValidationError("include=words is not available with mode=cleaned", field="include")
+    result = _transcript(video_id, response, mode, source, db, with_words)
+    selected = getattr(result, "source", "whisper")
+    if selected in transcript_corrections.SOURCES:
+        result.corrections = [
+            CorrectionMark(**mark) for mark in transcript_corrections.applied_marks(db, video_id, selected)
+        ]
+    return result
+
+
+def _transcript(video_id: uuid.UUID, response: Response, mode: str, source: str, db, with_words: bool = False):
     # Check if video exists
     video = crud.get_video(db, video_id)
     if not video:
@@ -778,4 +789,5 @@ def get_youtube_transcript(
         blocks=blocks,
         source="youtube",
         source_label="YouTube captions",
+        corrections=[CorrectionMark(**mark) for mark in transcript_corrections.applied_marks(db, video_id, "youtube")],
     )
