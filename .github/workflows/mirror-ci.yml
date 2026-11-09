@@ -1,0 +1,93 @@
+name: Mirror CI
+run-name: Mirror CI ${{ github.sha }}
+'on':
+  push: null
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+    - name: Set up Python
+      id: python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: |
+          requirements.txt
+          requirements-dev.txt
+          requirements-ml-runtime.txt
+          constraints.txt
+    - name: Install FFmpeg shared libraries for the speech runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        privilege=()
+        if [[ "$(id -u)" != 0 ]]; then
+          privilege=(sudo)
+        fi
+        "${privilege[@]}" apt-get update -q
+        "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
+        ffmpeg -version
+    - name: Restore the pinned Python verification environment
+      id: verification-environment
+      uses: actions/cache@v4.1.2
+      with:
+        path: .verify-venv
+        key: verify-venv-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements.txt',
+          'requirements-dev.txt', 'requirements-ml-runtime.txt', 'constraints.txt', 'scripts/verify_ml_runtime.py')
+          }}
+    - name: Create isolated Python verification environment
+      if: steps.verification-environment.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        rm -rf -- .verify-venv
+        "${{ steps.python.outputs.python-path }}" -m venv .verify-venv
+        .verify-venv/bin/python -m pip install --upgrade pip
+        .verify-venv/bin/python -m pip install setuptools==84.1.0
+        # Keep the full ML test surface, using the same pinned CPU wheels as Dockerfile.cpu.
+        mapfile -t ml_wheels < <(grep -E '^(torch|torchaudio|torchcodec)==' requirements-ml-runtime.txt)
+        [[ "${#ml_wheels[@]}" == 3 ]]
+        .verify-venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu "${ml_wheels[@]}"
+        .verify-venv/bin/python -m pip install -c constraints.txt -c requirements-ml-runtime.txt -r requirements.txt -r requirements-dev.txt
+    - name: Validate the installed or restored Python environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        .verify-venv/bin/python -m pip check
+        .verify-venv/bin/python scripts/verify_ml_runtime.py
+        .verify-venv/bin/python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__"
+    - name: Run canonical verification
+      run: |
+        set -euo pipefail
+        PYTHON_BIN="$PWD/.verify-venv/bin/python" TEST_SERVICE_HOST=127.0.0.1 make verify
+    if: github.repository == 'subculture-collective/rekolekt'
+  mirror-gate:
+    name: Mirror CI gate
+    if: always() && github.repository == 'subculture-collective/rekolekt'
+    needs:
+    - verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+    - name: Require every verification job
+      env:
+        RESULTS: ${{ toJSON(needs) }}
+      run: |
+        python3 - <<'PY'
+        import json, os
+        results = json.loads(os.environ["RESULTS"])
+        expected = {'verify'}
+        assert set(results) == expected, results
+        for name, result in results.items():
+            assert result["result"] == "success", name + " did not pass"
+        PY

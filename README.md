@@ -61,3 +61,11 @@ gate.
 
 Built by [Subcult](https://subcult.tv). Licensed under [Apache-2.0](LICENSE), with
 [third-party notices](docs/THIRD_PARTY_NOTICES.md).
+
+## Public mirror CI
+
+Pull-request verification runs on standard GitHub-hosted runners in the public
+[subculture-collective/rekolekt mirror](https://github.com/subculture-collective/rekolekt/actions/workflows/mirror-ci.yml).
+Gitea remains the source for changes and pull requests. Its required
+`GitHub CI / Mirror CI gate` status follows the exact mirrored commit. Main-branch
+release verification and deployments run in Gitea.
