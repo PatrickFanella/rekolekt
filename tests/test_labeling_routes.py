@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import uuid
 from datetime import datetime, timedelta
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
@@ -197,20 +199,23 @@ def test_labeling_admin_routes_require_admin(client: TestClient, db_session):
     )
 
 
-def test_review_label_action_updates_status_and_feedback():
+@pytest.mark.parametrize("action", ["approve", "publish"])
+@pytest.mark.parametrize("actor", [None, {"id": uuid.uuid4()}])
+def test_review_label_action_updates_status_and_feedback(action, actor):
     label_id = uuid.uuid4()
     before = _label_row(label_id)
     after = _label_row(label_id, status="published")
     db = FakeDb([FakeResult([before]), FakeResult(), FakeResult(), FakeResult([after])])
-    payload = ArchiveLabelReviewAction(action="approve", reason="looks good")
+    payload = ArchiveLabelReviewAction(action=action, reason="looks good")
 
-    result = archive_routes._review_label_action(db, label_id, payload, {"id": uuid.uuid4()})
+    result = archive_routes._review_label_action(db, label_id, payload, actor)
 
     assert result.status == "published"
     assert db.commit_count == 0
     assert "UPDATE archive_labels SET status = :status" in db.calls[1][0]
     assert "INSERT INTO archive_label_feedback" in db.calls[2][0]
-    assert db.calls[2][1]["action"] == "approve"
+    assert db.calls[2][1]["action"] == action
+    assert json.loads(db.calls[2][1]["new_value"])["review_origin"] == "editorial"
 
 
 def test_review_assignment_approve_updates_assignment_label_and_feedback():
