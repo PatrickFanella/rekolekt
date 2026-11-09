@@ -1398,7 +1398,15 @@ def published_label_cards_for_period(
             LIMIT :per_label_limit
         ) evidence
         WHERE l.status = 'published'
-          AND l.source IN ('admin', 'seed', 'hybrid')
+          AND (
+              l.source IN ('admin', 'seed', 'hybrid')
+              OR EXISTS (
+                  SELECT 1 FROM archive_label_feedback AS f
+                  WHERE f.label_id = l.id
+                    AND f.action IN ('approve', 'publish')
+                    AND (f.user_id IS NOT NULL OR f.new_value->>'review_origin' = 'editorial')
+              )
+          )
         ORDER BY evidence.label_assignment_count DESC, l.label ASC,
                  evidence.assignment_confidence DESC,
                  evidence.evidence_count DESC,

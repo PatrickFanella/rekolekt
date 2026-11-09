@@ -298,6 +298,10 @@ def _insert_label_feedback(
     reason: str | None,
     user: Any,
 ) -> None:
+    # Editorial routes/tooling use this helper; machine enrichment records its
+    # own feedback without this marker. Keep actorless editorial actions distinct.
+    if action in {"approve", "publish"}:
+        new_value = {**new_value, "review_origin": "editorial"}
     db.execute(
         text("""
             INSERT INTO archive_label_feedback (
