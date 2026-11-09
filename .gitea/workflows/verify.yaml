@@ -4,9 +4,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
@@ -45,7 +42,14 @@ jobs:
           "${privilege[@]}" apt-get update -q
           "${privilege[@]}" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ffmpeg
           ffmpeg -version
+      - name: Restore the pinned Python verification environment
+        id: verification-environment
+        uses: actions/cache@v4.1.2
+        with:
+          path: .verify-venv
+          key: verify-venv-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.python.outputs.python-version }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt', 'requirements-ml-runtime.txt', 'constraints.txt', 'scripts/verify_ml_runtime.py') }}
       - name: Create isolated Python verification environment
+        if: steps.verification-environment.outputs.cache-hit != 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -58,6 +62,10 @@ jobs:
           [[ "${#ml_wheels[@]}" == 3 ]]
           .verify-venv/bin/python -m pip install --index-url https://download.pytorch.org/whl/cpu "${ml_wheels[@]}"
           .verify-venv/bin/python -m pip install -c constraints.txt -c requirements-ml-runtime.txt -r requirements.txt -r requirements-dev.txt
+      - name: Validate the installed or restored Python environment
+        shell: bash
+        run: |
+          set -euo pipefail
           .verify-venv/bin/python -m pip check
           .verify-venv/bin/python scripts/verify_ml_runtime.py
           .verify-venv/bin/python -c "import torch; assert '+cpu' in torch.__version__, torch.__version__"
