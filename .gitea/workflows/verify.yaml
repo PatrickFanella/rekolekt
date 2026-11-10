@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  # Push to main deploys the landing page; never cancel a deploy in progress.
+  # Main-branch verification only; GitHub deploys the landing page
+  # (.github/workflows/landing-deploy.yml).
   cancel-in-progress: false
 
 jobs:
@@ -78,60 +79,3 @@ jobs:
           done)"
           [[ "$gateway" =~ ^((25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])\.){3}(25[0-5]|2[0-4][0-9]|1[0-9]{2}|[1-9]?[0-9])$ ]]
           PYTHON_BIN="$PWD/.verify-venv/bin/python" TEST_SERVICE_HOST="$gateway" make verify
-  deploy-landing:
-    name: Build landing image and deploy Almaz
-    needs: verify
-    # Homelab deploy keys accept only Kvant's address (Kvant and its Kuznya VM); the kvant label keeps this job off Buran.
-    runs-on: [ubuntu-latest, kvant]
-    timeout-minutes: 20
-    env:
-      DEPLOY_REVISION: ${{ github.sha }}
-    steps:
-    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      with:
-        ref: ${{ github.sha }}
-    - name: Build the verified source revision
-      shell: bash
-      run: |
-        set -euo pipefail
-        test "$(git rev-parse HEAD)" = "$DEPLOY_REVISION"
-        image="fleet-deploy/rekolekt/rekolekt-landing:$DEPLOY_REVISION"
-        docker build --label "org.opencontainers.image.revision=$DEPLOY_REVISION" \
-          --label "org.opencontainers.image.source=https://git.subcult.tv/subculture-collective/rekolekt" \
-          -t "$image" landing
-    - name: Deploy the built image and verify public HTML
-      if: >-
-        github.server_url == 'https://git.subcult.tv' &&
-        github.ref == 'refs/heads/main' &&
-        (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-      shell: bash
-      env:
-        DEPLOY_KEY: ${{ secrets.HOMELAB_DEPLOY_KEY }}
-        DEPLOY_KNOWN_HOSTS: ${{ secrets.HOMELAB_KNOWN_HOSTS }}
-      run: |
-        set -euo pipefail
-        test "$(git rev-parse HEAD)" = "$DEPLOY_REVISION"
-        test -n "$DEPLOY_KEY"
-        test -n "$DEPLOY_KNOWN_HOSTS"
-        umask 077
-        deploy_dir=$(mktemp -d)
-        trap 'rm -rf "$deploy_dir"' EXIT
-        printf '%s\n' "$DEPLOY_KEY" > "$deploy_dir/key"
-        printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$deploy_dir/known_hosts"
-        unset DEPLOY_KEY DEPLOY_KNOWN_HOSTS
-        ssh_args=(-i "$deploy_dir/key" -o BatchMode=yes -o IdentitiesOnly=yes
-          -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$deploy_dir/known_hosts"
-          -o ConnectTimeout=15 onnwee@10.0.0.200)
-        ssh "${ssh_args[@]}" status
-        image="fleet-deploy/rekolekt/rekolekt-landing:$DEPLOY_REVISION"
-        # The forced receiver accepts a full hexadecimal revision; expand it here.
-        # shellcheck disable=SC2029
-        docker save "$image" | ssh "${ssh_args[@]}" "receive $DEPLOY_REVISION rekolekt-landing"
-        # shellcheck disable=SC2029
-        ssh "${ssh_args[@]}" "deploy $DEPLOY_REVISION"
-        expected=$(docker run --rm --entrypoint /bin/cat "$image" /srv/index.html | sha256sum | cut -d' ' -f1)
-        curl --fail --silent --show-error --retry 4 --retry-all-errors \
-          --max-time 30 https://rekolekt.subcult.tv/ > "$deploy_dir/live.html"
-        actual=$(sha256sum "$deploy_dir/live.html" | cut -d' ' -f1)
-        test "$actual" = "$expected"
-        printf 'Live HTML matches the image built from %s\n' "$DEPLOY_REVISION"
