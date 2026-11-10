@@ -81,7 +81,8 @@ jobs:
   deploy-landing:
     name: Build landing image and deploy Almaz
     needs: verify
-    runs-on: ubuntu-latest
+    # Homelab deploy keys accept only Kvant's address (Kvant and its Kuznya VM); the kvant label keeps this job off Buran.
+    runs-on: [ubuntu-latest, kvant]
     timeout-minutes: 20
     env:
       DEPLOY_REVISION: ${{ github.sha }}
