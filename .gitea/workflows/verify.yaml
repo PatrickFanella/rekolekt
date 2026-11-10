@@ -11,7 +11,8 @@ permissions:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # Push to main deploys the landing page; never cancel a deploy in progress.
+  cancel-in-progress: false
 
 jobs:
   verify:

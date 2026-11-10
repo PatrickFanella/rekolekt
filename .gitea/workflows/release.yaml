@@ -10,6 +10,11 @@ on:
 permissions:
   contents: read
 
+# One publishing run per tag or release branch; never cancel image push, signing or release creation.
+concurrency:
+  group: ${{ gitea.workflow }}-${{ gitea.ref }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     timeout-minutes: 120

@@ -1,7 +1,9 @@
 name: Mirror CI
 run-name: Mirror CI ${{ github.sha }}
 'on':
-  push: null
+  push:
+    branches-ignore:
+    - main
   workflow_dispatch: null
 permissions:
   contents: read
