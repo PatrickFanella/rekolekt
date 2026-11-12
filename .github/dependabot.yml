@@ -11,18 +11,15 @@ updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels:
       - "type:maintenance"
     commit-message:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
       include: "scope"
-    allow:
-      - dependency-type: "all"
     groups:
       python-minor-patch:
         patterns:
@@ -56,10 +53,9 @@ updates:
   - package-ecosystem: "npm"
     directory: "/clients/javascript"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels:
       - "type:maintenance"
       - "hold"
@@ -81,10 +77,9 @@ updates:
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "09:00"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels:
       - "type:maintenance"
       - "hold"
@@ -109,9 +104,8 @@ updates:
       - "/landing"
     schedule:
       interval: "monthly"
-      day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels:
       - "type:maintenance"
       - "hold"
@@ -140,9 +134,8 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
-      day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 1
     labels:
       - "type:maintenance"
       - "hold"
