@@ -1,39 +1,57 @@
 version: 2
+
+# Ready pull requests in this organization merge themselves once Mirror CI
+# passes. Mirror CI installs and tests the Python stack, so pip updates are
+# verified before they merge. It does not build images, run the SDK suites or
+# exercise the other workflows, so those ecosystems carry the `hold` label and
+# wait for a person. Every ecosystem skips major versions, groups minor and
+# patch updates into one pull request and keeps at most two open.
 updates:
-  # Python dependencies (main project)
+  # Python dependencies (requirements*.txt and constraints.txt)
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 10
-    reviewers:
-      - "onnwee"
+    open-pull-requests-limit: 2
     labels:
-      - "dependencies"
-      - "python"
+      - "type:maintenance"
     commit-message:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
       include: "scope"
-    # Group patch updates to reduce PR noise
+    allow:
+      - dependency-type: "all"
     groups:
-      patch-updates:
-        patterns:
-          - "*"
-        update-types:
-          - "patch"
-      minor-updates:
+      python-minor-patch:
         patterns:
           - "*"
         update-types:
           - "minor"
-    # Allow both direct and indirect updates
-    allow:
-      - dependency-type: "all"
-    # Separate major version updates for careful review
-  
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # The speech and diarization runtime is pinned together with the CPU,
+      # CUDA and ROCm image builds (requirements-ml-runtime.txt, the
+      # Dockerfiles and security/lightning-*.vex.json). Update it by hand.
+      - dependency-name: "torch"
+      - dependency-name: "torchaudio"
+      - dependency-name: "torchcodec"
+      - dependency-name: "pyannote.audio"
+      - dependency-name: "pyannote-audio"
+      - dependency-name: "lightning"
+      - dependency-name: "pytorch-lightning"
+      - dependency-name: "faster-whisper"
+      - dependency-name: "openai-whisper"
+      - dependency-name: "ctranslate2"
+      - dependency-name: "onnxruntime"
+      - dependency-name: "numpy"
+      - dependency-name: "cuda-toolkit"
+      - dependency-name: "cuda-bindings"
+      - dependency-name: "nvidia-*"
+
   # JavaScript SDK dependencies
   - package-ecosystem: "npm"
     directory: "/clients/javascript"
@@ -41,21 +59,24 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels:
-      - "dependencies"
-      - "javascript"
-      - "sdk"
+      - "type:maintenance"
+      - "hold"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
     groups:
-      patch-updates:
+      sdk-minor-patch:
         patterns:
           - "*"
         update-types:
+          - "minor"
           - "patch"
-  
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
   # Root package.json (commitizen, husky, etc.)
   - package-ecosystem: "npm"
     directory: "/"
@@ -63,32 +84,57 @@ updates:
       interval: "weekly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels:
-      - "dependencies"
-      - "javascript"
-      - "tooling"
+      - "type:maintenance"
+      - "hold"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-  
+    groups:
+      tooling-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
   # Docker base images
   - package-ecosystem: "docker"
-    directory: "/"
+    directories:
+      - "/"
+      - "/landing"
     schedule:
       interval: "monthly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 3
-    reviewers:
-      - "onnwee"
+    open-pull-requests-limit: 2
     labels:
-      - "dependencies"
-      - "docker"
+      - "type:maintenance"
+      - "hold"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
-  
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      # A new Python minor (3.12 and later) is a runtime migration.
+      - dependency-name: "python"
+        update-types: ["version-update:semver-minor"]
+      # Accelerator base images move together with the pinned PyTorch wheels.
+      - dependency-name: "rocm/dev-ubuntu-22.04"
+      - dependency-name: "nvidia/cuda"
+
   # GitHub Actions workflows
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -96,15 +142,20 @@ updates:
       interval: "monthly"
       day: "monday"
       time: "09:00"
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 2
     labels:
-      - "dependencies"
-      - "ci"
+      - "type:maintenance"
+      - "hold"
     commit-message:
       prefix: "chore(deps)"
       include: "scope"
     groups:
-      actions:
+      actions-minor-patch:
         patterns:
-          - "actions/*"
-          - "github/*"
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
