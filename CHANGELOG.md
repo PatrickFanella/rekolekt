@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Release Notes
 
 ### Upcoming Features
-See our [GitHub Issues](https://github.com/subculture-collective/transcript-create/issues) for planned features and enhancements.
+See our [GitHub Issues](https://github.com/subculture-collective/rekolekt/issues) for planned features and enhancements.
 
 ### Migration Guide
 For major version upgrades, see [MIGRATIONS.md](docs/MIGRATIONS.md) for database migration procedures.

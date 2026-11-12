@@ -188,7 +188,7 @@ Application deployment and configuration.
 
 **Variables:**
 ```yaml
-app_repo_url: "https://github.com/subculture-collective/transcript-create.git"
+app_repo_url: "https://github.com/subculture-collective/rekolekt.git"
 app_version: "main"
 app_install_dir: "/opt/transcript-create"
 ```
@@ -427,6 +427,6 @@ jobs:
 
 ## Support
 
-- Documentation: [docs/deployment/](../../docs/deployment/)
-- GitHub Issues: https://github.com/subculture-collective/transcript-create/issues
+- Documentation: [docs/deployment/](../docs/deployment/)
+- GitHub Issues: https://github.com/subculture-collective/rekolekt/issues
 - Ansible Documentation: https://docs.ansible.com/

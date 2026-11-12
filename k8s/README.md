@@ -226,5 +226,5 @@ For a more flexible deployment, consider using the Helm chart:
 ## Support
 
 For issues and questions:
-- GitHub Issues: https://github.com/subculture-collective/transcript-create/issues
-- Full documentation: https://github.com/subculture-collective/transcript-create/tree/main/docs/kubernetes
+- GitHub Issues: https://github.com/subculture-collective/rekolekt/issues
+- Full documentation: https://github.com/subculture-collective/rekolekt/tree/main/docs/kubernetes

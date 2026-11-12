@@ -19,7 +19,7 @@ We take the security of Transcript Create seriously. If you have discovered a se
 
 Instead, please report them via one of the following methods:
 
-1. **GitHub Security Advisories** (Preferred): [Report a vulnerability](https://github.com/subculture-collective/transcript-create/security/advisories/new)
+1. **GitHub Security Advisories** (Preferred): [Report a vulnerability](https://github.com/subculture-collective/rekolekt/security/advisories/new)
 2. **Email**: security@subculture.community
 
 ### What to Include
@@ -108,7 +108,7 @@ When contributing to this project:
 ## Security Contacts
 
 - **Security Email**: security@subculture.community
-- **GitHub Security**: Use [GitHub Security Advisories](https://github.com/subculture-collective/transcript-create/security/advisories)
+- **GitHub Security**: Use [GitHub Security Advisories](https://github.com/subculture-collective/rekolekt/security/advisories)
 
 ## Recognition
 

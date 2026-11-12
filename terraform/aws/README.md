@@ -336,6 +336,6 @@ jobs:
 
 ## Support
 
-- GitHub Issues: https://github.com/subculture-collective/transcript-create/issues
+- GitHub Issues: https://github.com/subculture-collective/rekolekt/issues
 - AWS Deployment Guide: [../../docs/deployment/aws.md](../../docs/deployment/aws.md)
 - Terraform Documentation: https://www.terraform.io/docs

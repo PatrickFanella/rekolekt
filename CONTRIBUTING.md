@@ -584,7 +584,7 @@ If checks take significantly longer, please report as an issue.
 
 **Start here:**
 1. Read our [First-Time Contributors Guide](docs/contributing/first-time.md) for a step-by-step walkthrough
-2. Look for issues labeled [`good first issue`](https://github.com/subculture-collective/transcript-create/labels/good%20first%20issue) - these are beginner-friendly
+2. Look for issues labeled [`good first issue`](https://github.com/subculture-collective/rekolekt/labels/good%20first%20issue) - these are beginner-friendly
 3. Check out our [Development Setup](#development-setup) guide
 4. Don't hesitate to ask questions!
 
@@ -599,15 +599,15 @@ If checks take significantly longer, please report as an issue.
 If you have questions or need help:
 
 1. **Documentation**: Check the [README.md](README.md) and [docs/](docs/) folder
-2. **Existing Issues**: Search [existing issues](https://github.com/subculture-collective/transcript-create/issues) for similar questions
-3. **Ask a Question**: Open a [new issue](https://github.com/subculture-collective/transcript-create/issues/new/choose) with the question template
+2. **Existing Issues**: Search [existing issues](https://github.com/subculture-collective/rekolekt/issues) for similar questions
+3. **Ask a Question**: Open a [new issue](https://github.com/subculture-collective/rekolekt/issues/new/choose) with the question template
 4. **Development Questions**: Check [docs/development/](docs/development/) for architecture and code guidelines
 
 We strive to respond to all questions within 48 hours. Don't be shy - there are no stupid questions!
 
 ## Security
 
-Please review [SECURITY.md](SECURITY.md) for:
+Please review [SECURITY.md](docs/SECURITY.md) for:
 
 - Reporting security vulnerabilities
 - Secrets management guidelines
@@ -616,7 +616,7 @@ Please review [SECURITY.md](SECURITY.md) for:
 
 ## Recognition
 
-All contributors are recognized in our [CONTRIBUTORS.md](CONTRIBUTORS.md) file. Your contributions, big or small, are valuable to us!
+All contributors are recognized in our [CONTRIBUTORS.md](docs/CONTRIBUTORS.md) file. Your contributions, big or small, are valuable to us!
 
 ## License
 

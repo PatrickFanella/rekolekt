@@ -738,5 +738,5 @@ docker compose logs worker | grep "circuit breaker"
 ## Support
 
 For issues or questions:
-- GitHub Issues: https://github.com/subculture-collective/transcript-create/issues
-- Documentation: https://github.com/subculture-collective/transcript-create/tree/main/docs
+- GitHub Issues: https://github.com/subculture-collective/rekolekt/issues
+- Documentation: https://github.com/subculture-collective/rekolekt/tree/main/docs

@@ -43,13 +43,13 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/subculture-collective/transcript-create.git",
+    "url": "https://github.com/subculture-collective/rekolekt.git",
     "directory": "clients/javascript"
   },
   "bugs": {
-    "url": "https://github.com/subculture-collective/transcript-create/issues"
+    "url": "https://github.com/subculture-collective/rekolekt/issues"
   },
-  "homepage": "https://github.com/subculture-collective/transcript-create/tree/main/clients/javascript",
+  "homepage": "https://github.com/subculture-collective/rekolekt/tree/main/clients/javascript",
   "dependencies": {
     "ky": "^1.7.3"
   },

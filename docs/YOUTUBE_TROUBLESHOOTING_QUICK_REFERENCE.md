@@ -430,9 +430,9 @@ If this quick reference doesn't solve your issue:
    - [Health Checks](health-checks.md)
    - [Monitoring](MONITORING.md)
 
-3. **Search issues**: https://github.com/subculture-collective/transcript-create/issues
+3. **Search issues**: https://github.com/subculture-collective/rekolekt/issues
 
-4. **Create new issue**: https://github.com/subculture-collective/transcript-create/issues/new
+4. **Create new issue**: https://github.com/subculture-collective/rekolekt/issues/new
 
 Include in your issue:
 - Error message from logs

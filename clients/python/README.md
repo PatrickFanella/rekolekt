@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-Official Python client library for the [Transcript Create API](https://github.com/subculture-collective/transcript-create). Create searchable, exportable transcripts from YouTube videos with Whisper transcription and optional speaker diarization.
+Official Python client library for the [Transcript Create API](https://github.com/subculture-collective/rekolekt). Create searchable, exportable transcripts from YouTube videos with Whisper transcription and optional speaker diarization.
 
 ## Features
 
@@ -318,7 +318,7 @@ black transcript_create_client tests
 
 ## API Reference
 
-See the [main API documentation](https://github.com/subculture-collective/transcript-create#api-reference-selected) for complete endpoint details.
+See the [main API documentation](https://github.com/subculture-collective/rekolekt#api-reference-selected) for complete endpoint details.
 
 ### Client Methods
 
@@ -345,19 +345,18 @@ See the [main API documentation](https://github.com/subculture-collective/transc
 
 ## Contributing
 
-Contributions are welcome! Please see the [main contributing guide](https://github.com/subculture-collective/transcript-create/blob/main/CONTRIBUTING.md).
+Contributions are welcome! Please see the [main contributing guide](https://github.com/subculture-collective/rekolekt/blob/main/CONTRIBUTING.md).
 
 ## License
 
-Apache License 2.0 - see [LICENSE](https://github.com/subculture-collective/transcript-create/blob/main/LICENSE)
+Apache License 2.0 - see [LICENSE](https://github.com/subculture-collective/rekolekt/blob/main/LICENSE)
 
 ## Support
 
-- 📖 [Documentation](https://github.com/subculture-collective/transcript-create)
-- 🐛 [Issue Tracker](https://github.com/subculture-collective/transcript-create/issues)
-- 💬 [Discussions](https://github.com/subculture-collective/transcript-create/discussions)
+- 📖 [Documentation](https://github.com/subculture-collective/rekolekt)
+- 🐛 [Issue Tracker](https://github.com/subculture-collective/rekolekt/issues)
+- 💬 [Discussions](https://github.com/subculture-collective/rekolekt/discussions)
 
 ## Related Projects
 
 - [JavaScript/TypeScript SDK](../javascript) - Client for Node.js and browsers
-- [Go SDK](../go) - Client for Go applications

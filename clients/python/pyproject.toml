@@ -42,10 +42,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/subculture-collective/transcript-create"
-Documentation = "https://github.com/subculture-collective/transcript-create/tree/main/clients/python"
-Repository = "https://github.com/subculture-collective/transcript-create"
-"Bug Tracker" = "https://github.com/subculture-collective/transcript-create/issues"
+Homepage = "https://github.com/subculture-collective/rekolekt"
+Documentation = "https://github.com/subculture-collective/rekolekt/tree/main/clients/python"
+Repository = "https://github.com/subculture-collective/rekolekt"
+"Bug Tracker" = "https://github.com/subculture-collective/rekolekt/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]

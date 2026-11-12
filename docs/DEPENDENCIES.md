@@ -19,8 +19,7 @@ matches in five dependency groups. The pinned audit repair uses:
 | pypdf | 6.21.2 | Development PDF assertions; [upstream security release](https://github.com/py-pdf/pypdf/releases/tag/6.21.2) |
 | setuptools | 84.1.0 | Constraints, Docker build/bootstrap and verification/release bootstrap; [upstream advisory](https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w) |
 
-The requirements/constraints files are authoritative for these environments;
-the existing minimal editable-project `uv.lock` does not describe this graph.
+The requirements/constraints files are authoritative for these environments.
 The full Python 3.11 requirements graph resolved with these pins, and its 205
 entries passed the existing advisory policy. No audit exception was added.
 

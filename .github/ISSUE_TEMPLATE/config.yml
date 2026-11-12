@@ -1,11 +1,11 @@
 blank_issues_enabled: false
 contact_links:
   - name: 💬 GitHub Discussions
-    url: https://github.com/subculture-collective/transcript-create/discussions
+    url: https://github.com/subculture-collective/rekolekt/discussions
     about: Ask questions, share ideas, or discuss the project with the community
   - name: 📚 Documentation
-    url: https://github.com/subculture-collective/transcript-create#readme
+    url: https://github.com/subculture-collective/rekolekt#readme
     about: Check our comprehensive documentation for guides and API reference
   - name: 🔒 Security Vulnerability
-    url: https://github.com/subculture-collective/transcript-create/security/advisories/new
+    url: https://github.com/subculture-collective/rekolekt/security/advisories/new
     about: Report security vulnerabilities privately through GitHub Security Advisories

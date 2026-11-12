@@ -198,5 +198,5 @@ Both interfaces provide:
 
 For issues or questions:
 
-- GitHub: <https://github.com/subculture-collective/transcript-create>
+- GitHub: <https://github.com/subculture-collective/rekolekt>
 - Contact: [@onnwee](https://github.com/onnwee)

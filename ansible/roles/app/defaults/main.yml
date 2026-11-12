@@ -11,7 +11,7 @@ app_backup_dir: /opt/transcript-create/backups
 app_log_dir: /var/log/transcript-create
 
 # Repository
-app_repo_url: https://github.com/subculture-collective/transcript-create.git
+app_repo_url: https://github.com/subculture-collective/rekolekt.git
 app_version: main
 
 # Python settings

@@ -307,7 +307,7 @@ git push origin v1.2.0
 
 #### 2. Create GitHub Release
 
-Go to [GitHub Releases](https://github.com/subculture-collective/transcript-create/releases):
+Go to [GitHub Releases](https://github.com/subculture-collective/rekolekt/releases):
 
 1. Click "Draft a new release"
 2. Choose tag: `v1.2.0`
@@ -342,7 +342,7 @@ Go to [GitHub Releases](https://github.com/subculture-collective/transcript-crea
    
    ## 📝 Full Changelog
    
-   See [CHANGELOG.md](https://github.com/subculture-collective/transcript-create/blob/main/CHANGELOG.md) for complete details.
+   See [CHANGELOG.md](https://github.com/subculture-collective/rekolekt/blob/main/CHANGELOG.md) for complete details.
    
    ## ⬆️ Upgrade Notes
    

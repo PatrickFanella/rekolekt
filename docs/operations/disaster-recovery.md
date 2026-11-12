@@ -308,7 +308,7 @@ Use this procedure to restore media files from backup.
 
 2. **Clone repository:**
    ```bash
-   git clone https://github.com/subculture-collective/transcript-create.git
+   git clone https://github.com/subculture-collective/rekolekt.git
    cd transcript-create
    ```
 

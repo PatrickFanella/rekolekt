@@ -55,7 +55,7 @@ git checkout main
 git pull origin main
 
 # Verify all CI checks pass
-# Check: https://github.com/subculture-collective/transcript-create/actions
+# Check: https://github.com/subculture-collective/rekolekt/actions
 ```
 
 ### 2. Run standard-version
@@ -114,7 +114,7 @@ Once the tag is pushed, GitHub Actions will automatically:
 
 1. **Create GitHub Release**
    - Extract release notes from CHANGELOG.md
-   - Create release at: https://github.com/subculture-collective/transcript-create/releases
+   - Create release at: https://github.com/subculture-collective/rekolekt/releases
 
 2. **Build & Push Docker Images**
    - Build ROCm-enabled Docker image
@@ -128,7 +128,7 @@ Once the tag is pushed, GitHub Actions will automatically:
 3. **Notify**
    - Workflow completion notification
 
-Monitor progress: https://github.com/subculture-collective/transcript-create/actions
+Monitor progress: https://github.com/subculture-collective/rekolekt/actions
 
 ## Pre-release Versions
 
@@ -226,7 +226,7 @@ git push origin main --force  # Reset remote branch (⚠️ careful!)
 ### Docker image not building
 
 Check the workflow status:
-https://github.com/subculture-collective/transcript-create/actions/workflows/release.yml
+https://github.com/subculture-collective/rekolekt/actions/workflows/release.yml
 
 Common issues:
 - Dockerfile syntax errors
@@ -266,4 +266,4 @@ Returns:
 
 - Check [CONTRIBUTING.md](../../CONTRIBUTING.md)
 - Ask in GitHub Discussions
-- Review [previous releases](https://github.com/subculture-collective/transcript-create/releases)
+- Review [previous releases](https://github.com/subculture-collective/rekolekt/releases)
