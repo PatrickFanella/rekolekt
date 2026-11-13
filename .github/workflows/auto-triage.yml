@@ -28,7 +28,7 @@ jobs:
 
             - name: Add issue to Project 7
               id: add_to_project
-              uses: actions/add-to-project@v1.0.1
+              uses: actions/add-to-project@v1.0.2
               with:
                   project-url: https://github.com/users/onnwee/projects/7
                   github-token: ${{ github.token }}
