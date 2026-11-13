@@ -1,14 +1,14 @@
 # Core API framework
-fastapi==0.139.0
-uvicorn[standard]==0.38.0
+fastapi==0.162.4
+uvicorn[standard]==0.54.0
 
 # Database
-sqlalchemy==2.0.44
-psycopg[binary]==3.2.10
-alembic==1.17.0
+sqlalchemy==2.1.8
+psycopg[binary]==3.3.8
+alembic==1.20.1
 
 # YouTube and media processing
-yt-dlp==2026.7.4
+yt-dlp==2026.10.26
 
 # Whisper transcription backends
 faster-whisper==1.2.0
@@ -21,27 +21,27 @@ pyannote.audio==4.0.1
 # Core dependencies
 # Audited Python 3.11 runtime pin; GPU image variants use the same version.
 numpy==2.2.6
-python-dotenv==1.2.2
-pydantic==2.12.3
-pydantic-settings==2.11.0
+python-dotenv==1.2.4
+pydantic==2.14.3
+pydantic-settings==2.16.2
 requests==2.34.2
 
 # Authentication
-Authlib==1.9.4
+Authlib==1.9.5
 httpx==0.28.1  # Required by Authlib's Starlette async OAuth client
 itsdangerous==2.2.0  # Required for session middleware
 
 # PDF export
-reportlab==4.4.4
+reportlab==4.5.1
 
 # Metrics and monitoring
-prometheus-client==0.21.0
+prometheus-client==0.26.0
 
 # Rate limiting
-slowapi==0.1.9
+slowapi==0.1.10
 
 # Redis caching
-redis==5.2.1
+redis==5.3.1
 
 # Optional: Error tracking (set SENTRY_DSN to enable)
 # sentry-sdk==2.19.2
